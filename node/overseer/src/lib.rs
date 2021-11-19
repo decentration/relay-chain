@@ -400,13 +400,8 @@ pub async fn forward_events<P: BlockchainEvents<Block>>(client: Arc<P>, mut hand
 /// # 	});
 /// # }
 /// ```
-#[overlord(
-	gen=AllMessages,
-	event=Event,
-	signal=OverseerSignal,
-	error=SubsystemError,
-	network=NetworkBridgeEvent<protocol_v1::ValidationProtocol>,
-)]
+#[overlord( gen=AllMessages, event=Event, signal=OverseerSignal, error=SubsystemError, network=NetworkBridgeEvent<protocol_v1::ValidationProtocol> )]
+
 pub struct Overseer<SupportsParachains> {
 	#[subsystem(no_dispatch, CandidateValidationMessage)]
 	candidate_validation: CandidateValidation,
