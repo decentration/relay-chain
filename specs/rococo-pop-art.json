@@ -3,7 +3,7 @@
   "id": "rococo_pop_art_staging_testnet",
   "chainType": "Live",
   "bootNodes": [
-    "/ip4/134.122.101.173/tcp/30335/p2p/12D3KooWNi6tGT5HVDB5qyKpqjCW9T97a3JYaXG85QtGNBYcP4N3"
+    "/ip4/134.122.101.173/tcp/30333/p2p/12D3KooWMUjKWixBU6kv8iqcAvRq12DEQhKeJgsWJ8YPcMaCsC3y"
   ],
   "telemetryEndpoints": [
     [

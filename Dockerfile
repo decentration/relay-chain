@@ -24,7 +24,8 @@ FROM debian:buster-slim
 LABEL description="This is the 2nd stage: a very small image where we copy the polkadot binary."
 ARG PROFILE=release
 COPY --from=builder /polkadot/target/$PROFILE/polkadot /usr/local/bin
-
+COPY ./specs/ /specs/
+RUN apt update && apt install -y ca-certificates 
 RUN useradd -m -u 1000 -U -s /bin/sh -d /polkadot polkadot && \
 	mkdir -p /polkadot/.local/share && \
 	mkdir /data && \
