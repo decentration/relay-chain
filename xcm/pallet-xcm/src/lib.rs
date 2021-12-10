@@ -179,7 +179,7 @@ pub mod pallet {
 		/// \[ origin location, id, expected location \]
 		InvalidResponder(MultiLocation, QueryId, Option<MultiLocation>),
 		/// Expected query response has been received but the expected origin location placed in
-		/// storate by this runtime previously cannot be decoded. The query remains registered.
+		/// storage by this runtime previously cannot be decoded. The query remains registered.
 		///
 		/// This is unexpected (since a location placed in storage in a previously executing
 		/// runtime should be readable prior to query timeout) and dangerous since the possibly
@@ -1192,6 +1192,11 @@ pub mod pallet {
 		/// Note that a particular destination to whom we would like to send a message is unknown
 		/// and queue it for version discovery.
 		fn note_unknown_version(dest: &MultiLocation) {
+			log::trace!(
+				target: "xcm::pallet_xcm::note_unknown_version",
+				"XCM version is unknown for destination: {:?}",
+				dest,
+			);
 			let versioned_dest = VersionedMultiLocation::from(dest.clone());
 			VersionDiscoveryQueue::<T>::mutate(|q| {
 				if let Some(index) = q.iter().position(|i| &i.0 == &versioned_dest) {
@@ -1214,7 +1219,14 @@ pub mod pallet {
 					Self::note_unknown_version(dest);
 					SafeXcmVersion::<T>::get()
 				})
-				.ok_or(())
+				.ok_or_else(|| {
+					log::trace!(
+						target: "xcm::pallet_xcm::wrap_version",
+						"Could not determine a version to wrap XCM for destination: {:?}",
+						dest,
+					);
+					()
+				})
 				.and_then(|v| xcm.into().into_version(v.min(XCM_VERSION)))
 		}
 	}

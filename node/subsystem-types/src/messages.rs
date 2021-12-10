@@ -355,7 +355,7 @@ pub enum NetworkBridgeMessage {
 	/// connected to.
 	ConnectToResolvedValidators {
 		/// Each entry corresponds to the addresses of an already resolved validator.
-		validator_addrs: Vec<Vec<Multiaddr>>,
+		validator_addrs: Vec<HashSet<Multiaddr>>,
 		/// The peer set we want the connection on.
 		peer_set: PeerSet,
 	},
@@ -610,6 +610,13 @@ pub enum RuntimeApiRequest {
 		ParaId,
 		OccupiedCoreAssumption,
 		RuntimeApiSender<Option<PersistedValidationData>>,
+	),
+	/// Get the persisted validation data for a particular para along with the current validation code
+	/// hash, matching the data hash against an expected one.
+	AssumedValidationData(
+		ParaId,
+		Hash,
+		RuntimeApiSender<Option<(PersistedValidationData, ValidationCodeHash)>>,
 	),
 	/// Sends back `true` if the validation outputs pass all acceptance criteria checks.
 	CheckValidationOutputs(
