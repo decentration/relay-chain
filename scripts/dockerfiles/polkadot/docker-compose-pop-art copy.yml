@@ -7,7 +7,7 @@ services:
       - "30333:30333"
       - "9933:9933"
       - "9944:9944"
-    command: "/usr/local/bin/polkadot --chain ./specs/rococo-pop-art.json --port 30333 --ws-port 9944 --rpc-port 9933 --telemetry-url 'wss://telemetry.polkadot.io/submit/ 0' --validator --name Decentration01"
+    command: "--unsafe-ws-external --rpc-cors all --wasm-execution Compiled --rpc-external --rpc-methods Unsafe --validator --name pop-art-validator-1 --ws-port 9944 --port 30335 --rpc-port 9933 --chain rococo"
     volumes:
       - "pop_art_validator_1:/data"
   validator_2:
@@ -16,8 +16,8 @@ services:
     ports:
       - "30334:30334"
       - "9934:9934"
-      - "9945:9945"
-    command: "/usr/local/bin/polkadot --chain ./specs/rococo-pop-art.json --port 30334 --ws-port 9945 --rpc-port 9934 --telemetry-url 'wss://telemetry.polkadot.io/submit/ 0' --validator --name Decentration02"
+      - "9944:9944"
+    command: "--unsafe-ws-external --rpc-cors all --wasm-execution Compiled --rpc-external --rpc-methods Unsafe --validator --name pop-art-validator-2 --ws-port 9945 --port 30336 --rpc-port 9934 --chain rococo"
     volumes:
       - "pop_art_validator_2:/data"
   validator_3:
@@ -26,8 +26,8 @@ services:
     ports:
       - "30335:30335"
       - "9935:9935"
-      - "9946:9946"
-    command: "/usr/local/bin/polkadot --chain ./specs/rococo-pop-art.json --port 30335 --ws-port 9946 --rpc-port 9935 --telemetry-url 'wss://telemetry.polkadot.io/submit/ 0' --validator --name Decentration03"
+      - "9945:9945"
+    command: "--unsafe-ws-external --rpc-cors all --wasm-execution Compiled --rpc-external --rpc-methods Unsafe --validator --name pop-art-validator-2 --ws-port 9945 --port 30336 --rpc-port 9934 --chain rococo"
     volumes:
       - "pop_art_validator_3:/data"
 volumes:

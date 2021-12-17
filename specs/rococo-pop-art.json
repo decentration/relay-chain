@@ -3,14 +3,11 @@
   "id": "rococo_pop_art_staging_testnet",
   "chainType": "Live",
   "bootNodes": [
-    "/ip4/134.122.101.173/tcp/30333/p2p/12D3KooWMUjKWixBU6kv8iqcAvRq12DEQhKeJgsWJ8YPcMaCsC3y"
+    "/ip4/134.122.101.173/tcp/30333/p2p/12D3KooWDHAB5GLbVBgHgvv1yuKbPKTmd8ZxEa5PUsAhDY1VYRW9",
+    "/ip4/134.122.101.173/tcp/30334/p2p/12D3KooWLQyBfGcit5nZ3oxnkD17mHpwUKYRhe4eKjuuKqHvbe6h",
+    "/ip4/134.122.101.173/tcp/30335/p2p/12D3KooWJwa3YPhUNz7adnJzGeXu9QnkV9Lf5hCE77yag8Nv4FqK"
   ],
-  "telemetryEndpoints": [
-    [
-      "/dns/telemetry.polkadot.io/tcp/443/x-parity-wss/%2Fsubmit%2F",
-      0
-    ]
-  ],
+  "telemetryEndpoints": [],
   "protocolId": "pop",
   "properties": null,
   "forkBlocks": null,
