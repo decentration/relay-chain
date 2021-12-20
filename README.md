@@ -1,5 +1,7 @@
 # Pop-Art Relay Chain 
 
+![POP-image](https://github.com/Kabocha-Network/polkadot/blob/master/images/pop-art.jpg?raw=true)
+
 This branch contains Pop-Art, a custom Rococo relay staging network. It is intended for projects in the Edgeware community, and wider Substrate ecosytem, so that they can test their parachain integrations. 
 
 
