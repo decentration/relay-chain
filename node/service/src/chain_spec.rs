@@ -764,7 +764,7 @@ fn rococo_staging_testnet_config_genesis(wasm_binary: &[u8]) -> rococo_runtime::
 		// 5D7DGQNjk5gAwatPSMf555VB1W8UCq1sQomHX2eRwiLqhc4t
 		hex!["2e25b97b6ea3d9ea70d82e7896a8979483185186f853d5a7614d2dcfd983477c"].into(),
 	];
-
+	// the double use of AccountId represents Stash and Controller accounts
 	// ./scripts/prepare-test-net.sh 8
 	let initial_authorities: Vec<(
 		AccountId,
@@ -779,13 +779,13 @@ fn rococo_staging_testnet_config_genesis(wasm_binary: &[u8]) -> rococo_runtime::
 
 	)> = vec![
 		(
-			//5DvXwFVJAhuzMEdQmFsfzCGL1CDUqVJc6nDHyxDqYoSqUE18 - Kabocha 2 Ramsey Validator - sr25519
+			//5DvXwFVJAhuzMEdQmFsfzCGL1CDUqVJc6nDHyxDqYoSqUE18 - Kabocha Ramsey Validator 0 - sr25519
 			hex!["523d1b4a1d3c58231066099d34db338d92800b9c4e1815fa58f1e901c7539925"].into(),
 			//5FpxUEnm3pKA4Y2A2HdLpxxfEWSkK8mhbqJKnivEp7V7ydEx - Ramsey Validator - sr25519
 			hex!["a674b0d900c6c793229d9a2f06fd799f8d980e73a7d78a4b9326e0f8d8d2fa01"].into(),
 			//5HTALD3kTwmDHNKEKxsquepU56Quzq59xKGmhksekpcF3C5T - Kabocha BabeId Validator 0 - sr25519
 			hex!["ee4db0387fd5e529914946b419641fd607235721d21e8c415b2347b81ebbee0a"].unchecked_into(),
-			//5GboBX4hqNVopiBQVsXWAw3SzD5dpKxqjK3iDA38GPxJEi6w - Ramsey Validator 0 - ed25519
+			//5GboBX4hqNVopiBQVsXWAw3SzD5dpKxqjK3iDA38GPxJEi6w - Ramsey Validator 0 GRANDPA - ed25519
 			hex!["c8a77787fb844565b4cc02594c8d62cddc2249a379374f171618bf06c9d1468c"].unchecked_into(),
 			//5ELHgNfi7bXWmmoyjdmBnY3B2MPBXgyAesdRkpC4Kgwm5ZUd - Ramsey Validator - sr25519
 			hex!["645b01338d3755b8fb7fae44b20bd6e6e181e579a4ec5f12915a50324091806a"].unchecked_into(),
@@ -805,7 +805,7 @@ fn rococo_staging_testnet_config_genesis(wasm_binary: &[u8]) -> rococo_runtime::
 			hex!["f8e89e51a86b245b4a7895964b4529af083b239b660b2e4c80088dcb16bc4771"].into(),
 			//5CcLtfQuroSgXRYgcVacAAopnF8gN1PrJEGdqxTgh9ZvUzHK - Kabocha BabeId Validator 1 - sr25519
 			hex!["182146c16fe9538f69d0dd380cf79ee289dd190d6bb68cd425f3ad2789b31663"].unchecked_into(),
-			//5FUibppET3z3SRqbfgGAzMTRUgBcdVzWw2Kv9pCsQLd6qsp8 - Ramsey Validator 1 - ed25519
+			//5FUibppET3z3SRqbfgGAzMTRUgBcdVzWw2Kv9pCsQLd6qsp8 - Ramsey Validator 1 GRANDPA - ed25519
 			hex!["9705184808e321b2a30246cb63976e703fec4f2f7551b2b0dbc7cd7bb144a13d"].unchecked_into(),
 			//5HpSZnVXxhFpfVdBRxxnPgg4okeMKEHyxR7c2zU5TcTJZiq8 - Ramsey Validator - sr25519
 			hex!["fe887d9a718a3931858c9c9830c5217603d112ac6a7039c0cc0303a1f7700e6f"].unchecked_into(),
@@ -825,7 +825,7 @@ fn rococo_staging_testnet_config_genesis(wasm_binary: &[u8]) -> rococo_runtime::
 			hex!["40f1231a4ccca931db3eeb709ec7609c3a848e75d3bbbc58ac5d93fffc8c8d7f"].into(),
 			//5Gekpirt85FG8J3eaZGyCbx8CT64oPrTPXCXmUqAU1tvrb1U - Kabocha BabeId Validator 2 - sr25519
 			hex!["cae94374efa7c21f44e3bd3d3eefe431a6ee94d727e5a31767ee21108bf5da5d"].unchecked_into(),
-			//5EX7Uw8VbNgDtdEbTa3rGVkR7VsGcPoFpFfPYs4iexyKVw72 - Ramsey Validator 2 - ed25519
+			//5EX7Uw8VbNgDtdEbTa3rGVkR7VsGcPoFpFfPYs4iexyKVw72 - Ramsey Validator 2 GRANDPA - ed25519
 			hex!["6c9c608cc8e5fcbed6070ee7cb60df29d14b96d011cb7a7259eafb3fd705a042"].unchecked_into(),
 			//5FLZ8nsw6v1tKQ4dAfbMX5z6cH33m4iVBmKiABR5uRx1x1Ay - Ramsey Validator - sr25519
 			hex!["90cb44125f87ebec07ea78aa87f72c57ebf2de741e79e7d0c7c3c181caaba002"].unchecked_into(),
@@ -837,6 +837,29 @@ fn rococo_staging_testnet_config_genesis(wasm_binary: &[u8]) -> rococo_runtime::
 			hex!["18624f8f0f9e4423cca09e302cac9e7508d4a5a62acc78adee0d0358c8e09306"].unchecked_into(),
 			//5DEW3uXjKLVHgyYizr9sCEPZKQc9bcQzu4ebVDvdh2L6o9YV - Ramsey Validator - escda
 			hex!["03d87750a8bac2194ac69518232632e1b9ffc9e0e2d3671d11a8f66a43edb13e83"].unchecked_into(),
+		),
+		(
+
+			//It is best practice to use unique keys for every session key, but this fourth node is choosing convenience over security. 
+			
+			//5E9iyidUVASSSsFg3wf6UXtmv7yJWzzzi6KXAFy6arpjY5Ve - Kabocha Ramsey Validator 3 - sr25519
+			hex!["5c4c782a56c4870aa10e059d25dd7955e38894e0d47842e801be1cd1f6cb4f30"].into(),
+			//5FneFHwEM8gYDSufuWPcCXUtW9wzrk6FFFnuhUsLCA2cfUd4 - Ramsey Validator 3 - sr25519
+			hex!["a4b0daf09a03aa94263d0b593b77e9797f2915bbfc0b546df9d2431904842f31"].into(),
+			//5Hp7WnWYokm2reP7SMKtLeLUNpdwt7v6zPTayoH56We8t61z - Kabocha BabeId Validator 3 - sr25519
+			hex!["fe485b59897eb657b8fb6e601021222c3656fbffaca1309bda64c1f2ed7b7145"].unchecked_into(),
+			//5Ft3pW2rraxaaV4YAJ3XJMgkiiKWVNbPsssYtQLrioxo1STi - Ramsey Validator 3 Grandpa  - ed25519
+			hex!["a8d06f4010ee032cf35e3a5f44824a5a05f8002191e0e7c2a1a8ef8ba475f7b9"].unchecked_into(),
+			//5Hp7WnWYokm2reP7SMKtLeLUNpdwt7v6zPTayoH56We8t61z - Ramsey Validator 3- sr25519
+			hex!["90cb44125f87ebec07ea78aa87f72c57ebf2de741e79e7d0c7c3c181caaba002"].unchecked_into(),
+			//5Hp7WnWYokm2reP7SMKtLeLUNpdwt7v6zPTayoH56We8t61z - Ramsey Validator 3- sr25519
+			hex!["d05d7c7feb937af5cd14a7f46f8c56561053a2d760e8f3a30f4b6bcf1c96857e"].unchecked_into(),
+			//5Hp7WnWYokm2reP7SMKtLeLUNpdwt7v6zPTayoH56We8t61z - Ramsey Validator 3 - sr25519
+			hex!["f81d58a395229b3979b2bb266be9480746f12a7a8a7411af5e9ca42dad022566"].unchecked_into(),
+			//5Hp7WnWYokm2reP7SMKtLeLUNpdwt7v6zPTayoH56We8t61z - Ramsey Validator 3- sr25519
+			hex!["18624f8f0f9e4423cca09e302cac9e7508d4a5a62acc78adee0d0358c8e09306"].unchecked_into(),
+			//5FBLtYY1YkAuqDsQRUctjAeEZDES81akjeYsMqsKv227kHL4 - Ramsey Validator - escda
+			hex!["03cfd0843ad96f3902e3b9e79d6f67593e8d6489e0351a04b58848cdc949259439"].unchecked_into(),
 		),
 
 	];
