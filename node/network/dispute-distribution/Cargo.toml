@@ -19,7 +19,7 @@ sc-network = { git = "https://github.com/paritytech/substrate", branch = "polkad
 sp-application-crypto = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.14" }
 sp-keystore = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.14" }
 thiserror = "1.0.30"
-lru = "0.7.1"
+lru = "0.7.2"
 
 [dev-dependencies]
 async-trait = "0.1.52"
