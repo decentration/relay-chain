@@ -983,6 +983,7 @@ pub fn rococo_staging_testnet_config() -> Result<RococoChainSpec, String> {
 		),
 		Some(POP_ART_PROTOCOL_ID),
 		None,
+		None,
 		Default::default(),
 	))
 }
@@ -1033,31 +1034,6 @@ pub fn westend_staging_testnet_config() -> Result<WestendChainSpec, String> {
 	))
 }
 
-/// Rococo staging testnet config.
-#[cfg(feature = "rococo-native")]
-pub fn rococo_staging_testnet_config() -> Result<RococoChainSpec, String> {
-	let wasm_binary = rococo::WASM_BINARY.ok_or("Rococo development wasm not available")?;
-	let boot_nodes = vec![];
-
-	Ok(RococoChainSpec::from_genesis(
-		"Rococo Staging Testnet",
-		"rococo_staging_testnet",
-		ChainType::Live,
-		move || RococoGenesisExt {
-			runtime_genesis_config: rococo_staging_testnet_config_genesis(wasm_binary),
-			session_length_in_blocks: None,
-		},
-		boot_nodes,
-		Some(
-			TelemetryEndpoints::new(vec![(ROCOCO_STAGING_TELEMETRY_URL.to_string(), 0)])
-				.expect("Rococo Staging telemetry url is valid; qed"),
-		),
-		Some(DEFAULT_PROTOCOL_ID),
-		None,
-		None,
-		Default::default(),
-	))
-}
 
 /// Helper function to generate a crypto pair from seed
 pub fn get_from_seed<TPublic: Public>(seed: &str) -> <TPublic::Pair as Pair>::Public {
