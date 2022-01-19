@@ -1,0 +1,37 @@
+version: "3.2"
+services:
+  validator_1:
+    container_name: validator_1
+    image: decentration/pop-art:v0.9.14
+    ports:
+      - "30333:30333"
+      - "9933:9933"
+      - "9944:9944"
+    command: "--unsafe-ws-external --rpc-cors all --wasm-execution Compiled --rpc-external --rpc-methods Unsafe --validator --name pop-art-validator-1 --ws-port 9944 --port 30335 --rpc-port 9933 --chain rococo"
+    volumes:
+      - "pop_art_validator_1:/data"
+  validator_2:
+    container_name: validator_2
+    image: decentration/pop-art:v0.9.14
+    ports:
+      - "30334:30334"
+      - "9934:9934"
+      - "9944:9944"
+    command: "--unsafe-ws-external --rpc-cors all --wasm-execution Compiled --rpc-external --rpc-methods Unsafe --validator --name pop-art-validator-2 --ws-port 9945 --port 30336 --rpc-port 9934 --chain rococo"
+    volumes:
+      - "pop_art_validator_2:/data"
+  validator_3:
+    container_name: validator_3
+    image: decentration/pop-art:v0.9.14
+    ports:
+      - "30335:30335"
+      - "9935:9935"
+      - "9945:9945"
+    command: "--unsafe-ws-external --rpc-cors all --wasm-execution Compiled --rpc-external --rpc-methods Unsafe --validator --name pop-art-validator-2 --ws-port 9945 --port 30336 --rpc-port 9934 --chain rococo"
+    volumes:
+      - "pop_art_validator_3:/data"
+volumes:
+  pop_art_validator_1:
+  pop_art_validator_2:
+  pop_art_validator_3:
+  
