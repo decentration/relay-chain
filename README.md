@@ -1,3 +1,15 @@
+# Pop-Art Relay Chain 
+
+![alt text](https://github.com/Kabocha-Network/polkadot/blob/master/images/pop-art.jpg?raw=true?raw=true)
+
+This branch contains Pop-Art, a custom Rococo relay staging network. It is intended for projects in the Edgeware community, and wider Substrate ecosytem, so that they can test their parachain integrations. 
+
+
+# Docker Quick Start
+
+You can run multiple validators if you 
+
+
 # Polkadot
 
 Implementation of a <https://polkadot.network> node in Rust based on the Substrate framework.

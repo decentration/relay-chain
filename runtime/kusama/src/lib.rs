@@ -1368,6 +1368,7 @@ parameter_types! {
 }
 pub type TrustedTeleporters = (xcm_builder::Case<KusamaForStatemine>,);
 
+
 match_type! {
 	pub type OnlyParachains: impl Contains<MultiLocation> = {
 		MultiLocation { parents: 0, interior: X1(Parachain(_)) }
