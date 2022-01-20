@@ -3,22 +3,28 @@ FROM paritytech/ci-linux:production as builder
 
 LABEL description="This is the build stage for polkadot. Here we create the binary."
 
-ARG PROFILE=release
-WORKDIR /polkadot
-
-COPY . /polkadot/
 #RUN  fallocate -l 1G /swapfile
 
 RUN rustup uninstall nightly
 RUN rustup install nightly
+RUN rustup update 
 RUN rustup update nightly
-RUN rustup target add wasm32-unknown-unknown --toolchain nightly
+RUN rustup target add wasm32-unknown-unknown --toolchain nightly-2022-01-11
 RUN cargo clean
 RUN cargo update
-#RUN cargo +nightly-2021-11-01 check 
-RUN cargo build --release
+#RUN cargo +nightly-2022-01-11 check 
 
 # ===== SECOND STAGE ======
+WORKDIR /polkadot
+
+COPY . /polkadot/
+
+# ===== THIRD STAGE ======
+RUN cargo clean
+RUN cargo update
+RUN cargo build --release
+
+# ===== FOURTH STAGE ======
 
 FROM debian:buster-slim
 LABEL description="This is the 2nd stage: a very small image where we copy the polkadot binary."
