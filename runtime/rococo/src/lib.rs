@@ -97,11 +97,11 @@ include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 /// Runtime version (Rococo).
 pub const VERSION: RuntimeVersion = RuntimeVersion {
-	spec_name: create_runtime_str!("rococo"),
-	impl_name: create_runtime_str!("parity-rococo-v2.0"),
-	authoring_version: 0,
-	spec_version: 9142,
-	impl_version: 0,
+	spec_name: create_runtime_str!("pop-art live testnet"),
+	impl_name: create_runtime_str!("pop-art-rococo-v2.0"),
+	authoring_version: 1,
+	spec_version: 9143,
+	impl_version: 1,
 	#[cfg(not(feature = "disable-runtime-api"))]
 	apis: RUNTIME_API_VERSIONS,
 	#[cfg(feature = "disable-runtime-api")]
@@ -921,7 +921,7 @@ impl auctions::Config for Runtime {
 }
 
 parameter_types! {
-	pub const LeasePeriod: BlockNumber = 1 * DAYS;
+	pub const LeasePeriod: BlockNumber = 30 * DAYS;
 }
 
 impl slots::Config for Runtime {
