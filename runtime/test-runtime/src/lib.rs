@@ -324,7 +324,7 @@ impl frame_election_provider_support::onchain::Config for Runtime {
 }
 
 impl pallet_staking::Config for Runtime {
-	const MAX_NOMINATIONS: u32 = 16;
+	type MaxNominations = frame_support::pallet_prelude::ConstU32<16>;
 	type Currency = Balances;
 	type UnixTime = Timestamp;
 	type CurrencyToVote = frame_support::traits::U128CurrencyToVote;
@@ -349,6 +349,7 @@ impl pallet_staking::Config for Runtime {
 	// Use the nominator map to iter voter AND no-ops for all SortedListProvider hooks. The migration
 	// to bags-list is a no-op, but the storage version will be updated.
 	type SortedListProvider = pallet_staking::UseNominatorsMap<Runtime>;
+	type MaxUnlockingChunks = frame_support::traits::ConstU32<32>;
 	type BenchmarkingConfig = runtime_common::StakingBenchmarkingConfig;
 	type WeightInfo = ();
 }
@@ -516,6 +517,7 @@ impl parachains_ump::Config for Runtime {
 	type UmpSink = ();
 	type FirstMessageFactorPercent = FirstMessageFactorPercent;
 	type ExecuteOverweightOrigin = frame_system::EnsureRoot<AccountId>;
+	type WeightInfo = parachains_ump::TestWeightInfo;
 }
 
 parameter_types! {
@@ -549,6 +551,7 @@ impl parachains_hrmp::Config for Runtime {
 	type Event = Event;
 	type Origin = Origin;
 	type Currency = Balances;
+	type WeightInfo = parachains_hrmp::TestWeightInfo;
 }
 
 impl parachains_scheduler::Config for Runtime {}
