@@ -64,7 +64,7 @@ Now they are registered you (and your partner) can “rotate keys”, so that ne
 Submitting calls via RPC can be long winded, so a neat trick is to submit the BABE and GRANDPA so the chain produces and finalizes blocks, then you can run author_rotateKeys for each of your validators, which will then generate all your other keys automatically.
 
 ```
-curl -H ‘Content-Type: application/json’ --data ‘{ “jsonrpc”:”2.0", “method”:”author_rotateKeys”, “id”:1 }’ http://127.0.0.1:9933 
+curl -H "Content-Type: application/json" -d '{"id":1, "jsonrpc":"2.0", "method": "author_rotateKeys", "params":[]}' http://localhost:9933 
 ```
 
 Make the RPC call in the terminal of your where your validator’s node is located, which should look like this:
