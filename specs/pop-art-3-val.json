@@ -1,10 +1,10 @@
 {
-  "name": "Pop-Art Rococo Andy Testnet",
+  "name": "Pop-Art Rococo Testnet",
   "id": "rococo_staging_testnet",
   "chainType": "Live",
   "bootNodes": [
     "/ip4/134.122.101.173/tcp/30333/p2p/12D3KooWDHAB5GLbVBgHgvv1yuKbPKTmd8ZxEa5PUsAhDY1VYRW9"
-    ],
+  ],
   "telemetryEndpoints": [
     [
       "/dns/telemetry.polkadot.io/tcp/443/x-parity-wss/submit",
