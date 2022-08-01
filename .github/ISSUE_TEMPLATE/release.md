@@ -17,8 +17,7 @@ candidate branch.
 
 - [ ] Verify [`spec_version`](https://github.com/paritytech/polkadot/blob/master/doc/release-checklist.md#spec-version) has been incremented since the
     last release for any native runtimes from any existing use on public
-    (non-private) networks. If the runtime was published (release or pre-release), either
-    the `spec_version` or `impl` must be bumped.
+    (non-private) networks. If the runtime was published (release or pre-release), the `spec_version` must be bumped.
 - [ ] Verify previously [completed migrations](https://github.com/paritytech/polkadot/blob/master/doc/release-checklist.md#old-migrations-removed) are
     removed for any public (non-private/test) networks.
 - [ ] Verify pallet and [extrinsic ordering](https://github.com/paritytech/polkadot/blob/master/doc/release-checklist.md#extrinsic-ordering) has stayed
@@ -49,3 +48,4 @@ candidate branch or started an additional release candidate branch (rc-2, rc-3, 
 - [ ] Check that [build artifacts](https://github.com/paritytech/polkadot/blob/master/doc/release-checklist.md#build-artifacts) have been added to the
     draft-release
 - [ ] Check that all items listed in the [milestone](https://github.com/paritytech/polkadot/milestones) are included in the release.
+- [ ] Ensure that no `freenotes` were added into the release branch after the latest generated RC

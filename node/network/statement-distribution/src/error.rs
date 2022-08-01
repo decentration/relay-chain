@@ -18,9 +18,9 @@
 //! Error handling related code and Error/Result definitions.
 
 use polkadot_node_network_protocol::PeerId;
+use polkadot_node_subsystem::SubsystemError;
 use polkadot_node_subsystem_util::runtime;
-use polkadot_primitives::v1::{CandidateHash, Hash};
-use polkadot_subsystem::SubsystemError;
+use polkadot_primitives::v2::{CandidateHash, Hash};
 
 use crate::LOG_TARGET;
 
@@ -87,8 +87,8 @@ pub fn log_error(result: Result<()>, ctx: &'static str) -> std::result::Result<(
 		Err(jfyi) => {
 			match jfyi {
 				JfyiError::RequestedUnannouncedCandidate(_, _) =>
-					tracing::warn!(target: LOG_TARGET, error = %jfyi, ctx),
-				_ => tracing::debug!(target: LOG_TARGET, error = %jfyi, ctx),
+					gum::warn!(target: LOG_TARGET, error = %jfyi, ctx),
+				_ => gum::debug!(target: LOG_TARGET, error = %jfyi, ctx),
 			}
 			Ok(())
 		},

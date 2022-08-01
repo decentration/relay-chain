@@ -41,19 +41,18 @@ use polkadot_node_network_protocol::{
 	IfDisconnected,
 };
 use polkadot_node_primitives::{CandidateVotes, UncheckedDisputeMessage};
-use polkadot_primitives::{
-	v1::{AuthorityDiscoveryId, CandidateHash, Hash, SessionIndex},
-	v2::SessionInfo,
-};
-use polkadot_subsystem::{
+use polkadot_node_subsystem::{
 	messages::{
 		AllMessages, DisputeCoordinatorMessage, DisputeDistributionMessage, ImportStatementsResult,
 		NetworkBridgeMessage, RuntimeApiMessage, RuntimeApiRequest,
 	},
-	ActivatedLeaf, ActiveLeavesUpdate, FromOverseer, LeafStatus, OverseerSignal, Span,
+	ActivatedLeaf, ActiveLeavesUpdate, FromOrchestra, LeafStatus, OverseerSignal, Span,
 };
-use polkadot_subsystem_testhelpers::{
+use polkadot_node_subsystem_test_helpers::{
 	mock::make_ferdie_keystore, subsystem_test_harness, TestSubsystemContextHandle,
+};
+use polkadot_primitives::v2::{
+	AuthorityDiscoveryId, CandidateHash, Hash, SessionIndex, SessionInfo,
 };
 
 use self::mock::{
@@ -75,7 +74,7 @@ fn send_dispute_sends_dispute() {
 		let candidate = make_candidate_receipt(relay_parent);
 		let message = make_dispute_message(candidate.clone(), ALICE_INDEX, FERDIE_INDEX).await;
 		handle
-			.send(FromOverseer::Communication {
+			.send(FromOrchestra::Communication {
 				msg: DisputeDistributionMessage::SendDispute(message.clone()),
 			})
 			.await;
@@ -176,7 +175,7 @@ fn received_request_triggers_import() {
 							assert_matches!(
 								rx_response.await,
 								Err(err) => {
-									tracing::trace!(
+									gum::trace!(
 										target: LOG_TARGET,
 										?err,
 										"Request got dropped - other request already in flight"
@@ -198,7 +197,7 @@ fn received_request_triggers_import() {
 							assert_matches!(
 								rx_response.await,
 								Err(err) => {
-									tracing::trace!(
+									gum::trace!(
 										target: LOG_TARGET,
 										?err,
 										"Request got dropped - other request already in flight"
@@ -224,7 +223,7 @@ fn received_request_triggers_import() {
 			assert_matches!(
 				rx_response.await,
 				Err(err) => {
-					tracing::trace!(
+					gum::trace!(
 						target: LOG_TARGET,
 						?err,
 						"Request got dropped - peer is banned."
@@ -245,7 +244,7 @@ fn received_request_triggers_import() {
 		)
 		.await;
 
-		tracing::trace!(target: LOG_TARGET, "Concluding.");
+		gum::trace!(target: LOG_TARGET, "Concluding.");
 		conclude(&mut handle).await;
 	};
 	test_harness(test);
@@ -316,7 +315,7 @@ fn send_dispute_gets_cleaned_up() {
 		let candidate = make_candidate_receipt(relay_parent);
 		let message = make_dispute_message(candidate.clone(), ALICE_INDEX, FERDIE_INDEX).await;
 		handle
-			.send(FromOverseer::Communication {
+			.send(FromOrchestra::Communication {
 				msg: DisputeDistributionMessage::SendDispute(message.clone()),
 			})
 			.await;
@@ -381,7 +380,7 @@ fn dispute_retries_and_works_across_session_boundaries() {
 		let candidate = make_candidate_receipt(relay_parent);
 		let message = make_dispute_message(candidate.clone(), ALICE_INDEX, FERDIE_INDEX).await;
 		handle
-			.send(FromOverseer::Communication {
+			.send(FromOrchestra::Communication {
 				msg: DisputeDistributionMessage::SendDispute(message.clone()),
 			})
 			.await;
@@ -527,7 +526,7 @@ async fn nested_network_dispute_request<'a, F, O>(
 				candidate_receipt,
 				session,
 				statements,
-				pending_confirmation,
+				pending_confirmation: Some(pending_confirmation),
 			}
 		) => {
 			assert_eq!(session, MOCK_SESSION_INDEX);
@@ -563,7 +562,7 @@ async fn nested_network_dispute_request<'a, F, O>(
 					if let Some(sent_feedback) = sent_feedback {
 						sent_feedback.send(()).unwrap();
 					}
-					tracing::trace!(
+					gum::trace!(
 						target: LOG_TARGET,
 						"Valid import happened."
 					);
@@ -589,7 +588,7 @@ async fn conclude(handle: &mut TestSubsystemContextHandle<DisputeDistributionMes
 	})
 	.await;
 
-	handle.send(FromOverseer::Signal(OverseerSignal::Conclude)).await;
+	handle.send(FromOrchestra::Signal(OverseerSignal::Conclude)).await;
 }
 
 /// Pass a `new_session` if you expect the subsystem to retrieve `SessionInfo` when given the
@@ -606,7 +605,7 @@ async fn activate_leaf(
 ) {
 	let has_active_disputes = !active_disputes.is_empty();
 	handle
-		.send(FromOverseer::Signal(OverseerSignal::ActiveLeaves(ActiveLeavesUpdate {
+		.send(FromOrchestra::Signal(OverseerSignal::ActiveLeaves(ActiveLeavesUpdate {
 			activated: Some(ActivatedLeaf {
 				hash: activate,
 				number: 10,
@@ -669,7 +668,7 @@ async fn check_sent_requests(
 			let reqs: Vec<_> = reqs.into_iter().map(|r|
 				assert_matches!(
 					r,
-					Requests::DisputeSending(req) => {req}
+					Requests::DisputeSendingV1(req) => {req}
 				)
 			)
 			.collect();
@@ -736,7 +735,7 @@ where
 		match subsystem.run(ctx).await {
 			Ok(()) => {},
 			Err(fatal) => {
-				tracing::debug!(
+				gum::debug!(
 					target: LOG_TARGET,
 					?fatal,
 					"Dispute distribution exited with fatal error."

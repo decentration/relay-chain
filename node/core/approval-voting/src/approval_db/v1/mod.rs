@@ -20,7 +20,7 @@ use parity_scale_codec::{Decode, Encode};
 use polkadot_node_primitives::approval::{AssignmentCert, DelayTranche};
 use polkadot_node_subsystem::{SubsystemError, SubsystemResult};
 use polkadot_node_subsystem_util::database::{DBTransaction, Database};
-use polkadot_primitives::v1::{
+use polkadot_primitives::v2::{
 	BlockNumber, CandidateHash, CandidateReceipt, CoreIndex, GroupIndex, Hash, SessionIndex,
 	ValidatorIndex, ValidatorSignature,
 };
@@ -94,6 +94,9 @@ impl Backend for DbBackend {
 						&STORED_BLOCKS_KEY,
 						stored_block_range.encode(),
 					);
+				},
+				BackendWriteOp::DeleteStoredBlockRange => {
+					tx.delete(self.config.col_data, &STORED_BLOCKS_KEY);
 				},
 				BackendWriteOp::WriteBlocksAtHeight(h, blocks) => {
 					tx.put_vec(self.config.col_data, &blocks_at_height_key(h), blocks.encode());

@@ -20,7 +20,7 @@ use futures::channel::oneshot;
 use polkadot_node_subsystem::{errors::ChainApiError, SubsystemError};
 use polkadot_node_subsystem_util::{rolling_session_window::SessionsUnavailable, runtime};
 
-use crate::{real::participation, LOG_TARGET};
+use crate::{db, participation, LOG_TARGET};
 use parity_scale_codec::Error as CodecError;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -54,6 +54,10 @@ pub enum Error {
 	DbWriteFailed(std::io::Error),
 
 	#[fatal]
+	#[error("Reading from database failed: {0}")]
+	DbReadFailed(db::v1::Error),
+
+	#[fatal]
 	#[error("Oneshot for receiving block number from chain API got cancelled")]
 	CanceledBlockNumber,
 
@@ -82,7 +86,7 @@ pub enum Error {
 	#[error(transparent)]
 	Oneshot(#[from] oneshot::Canceled),
 
-	#[error("Dispute import confirmation send failed (receiver canceled)")]
+	#[error("Could not send import confirmation (receiver canceled)")]
 	DisputeImportOneshotSend,
 
 	#[error(transparent)]
@@ -119,10 +123,10 @@ impl JfyiError {
 		match self {
 			// don't spam the log with spurious errors
 			Self::Runtime(_) | Self::Oneshot(_) => {
-				tracing::debug!(target: LOG_TARGET, error = ?self)
+				gum::debug!(target: LOG_TARGET, error = ?self)
 			},
 			// it's worth reporting otherwise
-			_ => tracing::warn!(target: LOG_TARGET, error = ?self),
+			_ => gum::warn!(target: LOG_TARGET, error = ?self),
 		}
 	}
 }

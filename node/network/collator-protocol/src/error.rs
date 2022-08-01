@@ -19,8 +19,8 @@
 
 use polkadot_node_network_protocol::request_response::incoming;
 use polkadot_node_primitives::UncheckedSignedFullStatement;
+use polkadot_node_subsystem::errors::SubsystemError;
 use polkadot_node_subsystem_util::runtime;
-use polkadot_subsystem::errors::SubsystemError;
 
 use crate::LOG_TARGET;
 
@@ -56,7 +56,7 @@ pub fn log_error(result: Result<()>, ctx: &'static str) -> std::result::Result<(
 	match result.into_nested()? {
 		Ok(()) => Ok(()),
 		Err(jfyi) => {
-			tracing::warn!(target: LOG_TARGET, error = ?jfyi, ctx);
+			gum::warn!(target: LOG_TARGET, error = ?jfyi, ctx);
 			Ok(())
 		},
 	}

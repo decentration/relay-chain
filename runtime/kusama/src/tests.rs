@@ -17,10 +17,11 @@
 //! Tests for the Kusama Runtime Configuration
 
 use crate::*;
-use frame_support::weights::{GetDispatchInfo, WeightToFeePolynomial};
+use frame_support::weights::{GetDispatchInfo, WeightToFee as WeightToFeeT};
 use keyring::Sr25519Keyring::Charlie;
 use pallet_transaction_payment::Multiplier;
 use parity_scale_codec::Encode;
+use runtime_common::MinimumMultiplier;
 use separator::Separatable;
 use sp_runtime::FixedPointNumber;
 
@@ -67,7 +68,7 @@ fn payout_weight_portion() {
 #[ignore]
 fn block_cost() {
 	let max_block_weight = BlockWeights::get().max_block;
-	let raw_fee = WeightToFee::calc(&max_block_weight);
+	let raw_fee = WeightToFee::weight_to_fee(&max_block_weight);
 
 	println!(
 		"Full Block weight == {} // WeightToFee(full_block) == {} plank",
@@ -79,7 +80,7 @@ fn block_cost() {
 #[test]
 #[ignore]
 fn transfer_cost_min_multiplier() {
-	let min_multiplier = runtime_common::MinimumMultiplier::get();
+	let min_multiplier = MinimumMultiplier::get();
 	let call = pallet_balances::Call::<Runtime>::transfer_keep_alive {
 		dest: Charlie.to_account_id().into(),
 		value: Default::default(),

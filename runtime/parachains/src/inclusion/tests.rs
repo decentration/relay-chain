@@ -30,13 +30,11 @@ use assert_matches::assert_matches;
 use frame_support::assert_noop;
 use futures::executor::block_on;
 use keyring::Sr25519Keyring;
-use primitives::{
-	v0::PARACHAIN_KEY_TYPE_ID,
-	v1::{
-		BlockNumber, CandidateCommitments, CandidateDescriptor, CollatorId,
-		CompactStatement as Statement, Hash, SignedAvailabilityBitfield, SignedStatement,
-		UncheckedSignedAvailabilityBitfield, ValidationCode, ValidatorId, ValidityAttestation,
-	},
+use primitives::v2::{
+	BlockNumber, CandidateCommitments, CandidateDescriptor, CollatorId,
+	CompactStatement as Statement, Hash, SignedAvailabilityBitfield, SignedStatement,
+	UncheckedSignedAvailabilityBitfield, ValidationCode, ValidatorId, ValidityAttestation,
+	PARACHAIN_KEY_TYPE_ID,
 };
 use sc_keystore::LocalKeystore;
 use sp_keystore::{SyncCryptoStore, SyncCryptoStorePtr};
@@ -93,7 +91,7 @@ pub(crate) fn collator_sign_candidate(
 ) {
 	candidate.descriptor.collator = collator.public().into();
 
-	let payload = primitives::v1::collator_signature_payload(
+	let payload = primitives::v2::collator_signature_payload(
 		&candidate.descriptor.relay_parent,
 		&candidate.descriptor.para_id,
 		&candidate.descriptor.persisted_validation_data_hash,
@@ -148,7 +146,7 @@ pub(crate) async fn back_candidate(
 	let backed = BackedCandidate { candidate, validity_votes, validator_indices };
 
 	let successfully_backed =
-		primitives::v1::check_candidate_backing(&backed, signing_context, group.len(), |i| {
+		primitives::v2::check_candidate_backing(&backed, signing_context, group.len(), |i| {
 			Some(validators[group[i].0 as usize].public().into())
 		})
 		.ok()
@@ -308,9 +306,9 @@ pub(crate) fn make_vdata_hash(para_id: ParaId) -> Option<Hash> {
 
 #[test]
 fn collect_pending_cleans_up_pending() {
-	let chain_a = ParaId::from(1);
-	let chain_b = ParaId::from(2);
-	let thread_a = ParaId::from(3);
+	let chain_a = ParaId::from(1_u32);
+	let chain_b = ParaId::from(2_u32);
+	let thread_a = ParaId::from(3_u32);
 
 	let paras = vec![(chain_a, true), (chain_b, true), (thread_a, false)];
 	new_test_ext(genesis_config(paras)).execute_with(|| {
@@ -366,9 +364,9 @@ fn collect_pending_cleans_up_pending() {
 
 #[test]
 fn bitfield_checks() {
-	let chain_a = ParaId::from(1);
-	let chain_b = ParaId::from(2);
-	let thread_a = ParaId::from(3);
+	let chain_a = ParaId::from(1_u32);
+	let chain_b = ParaId::from(2_u32);
+	let thread_a = ParaId::from(3_u32);
 
 	let paras = vec![(chain_a, true), (chain_b, true), (thread_a, false)];
 	let validators = vec![
@@ -518,6 +516,7 @@ fn bitfield_checks() {
 			);
 
 			// clean up
+			#[allow(deprecated)]
 			PendingAvailability::<Test>::remove_all(None);
 		}
 
@@ -576,6 +575,7 @@ fn bitfield_checks() {
 				0
 			);
 
+			#[allow(deprecated)]
 			PendingAvailability::<Test>::remove_all(None);
 		}
 
@@ -707,9 +707,9 @@ fn bitfield_checks() {
 
 #[test]
 fn supermajority_bitfields_trigger_availability() {
-	let chain_a = ParaId::from(1);
-	let chain_b = ParaId::from(2);
-	let thread_a = ParaId::from(3);
+	let chain_a = ParaId::from(1_u32);
+	let chain_b = ParaId::from(2_u32);
+	let thread_a = ParaId::from(3_u32);
 
 	let paras = vec![(chain_a, true), (chain_b, true), (thread_a, false)];
 	let validators = vec![
@@ -892,9 +892,9 @@ fn supermajority_bitfields_trigger_availability() {
 
 #[test]
 fn candidate_checks() {
-	let chain_a = ParaId::from(1);
-	let chain_b = ParaId::from(2);
-	let thread_a = ParaId::from(3);
+	let chain_a = ParaId::from(1_u32);
+	let chain_b = ParaId::from(2_u32);
+	let thread_a = ParaId::from(3_u32);
 
 	// The block number of the relay-parent for testing.
 	const RELAY_PARENT_NUM: BlockNumber = 4;
@@ -1435,9 +1435,9 @@ fn candidate_checks() {
 
 #[test]
 fn backing_works() {
-	let chain_a = ParaId::from(1);
-	let chain_b = ParaId::from(2);
-	let thread_a = ParaId::from(3);
+	let chain_a = ParaId::from(1_u32);
+	let chain_b = ParaId::from(2_u32);
+	let thread_a = ParaId::from(3_u32);
 
 	// The block number of the relay-parent for testing.
 	const RELAY_PARENT_NUM: BlockNumber = 4;
@@ -1717,7 +1717,7 @@ fn backing_works() {
 
 #[test]
 fn can_include_candidate_with_ok_code_upgrade() {
-	let chain_a = ParaId::from(1);
+	let chain_a = ParaId::from(1_u32);
 
 	// The block number of the relay-parent for testing.
 	const RELAY_PARENT_NUM: BlockNumber = 4;
@@ -1823,9 +1823,9 @@ fn can_include_candidate_with_ok_code_upgrade() {
 
 #[test]
 fn session_change_wipes() {
-	let chain_a = ParaId::from(1);
-	let chain_b = ParaId::from(2);
-	let thread_a = ParaId::from(3);
+	let chain_a = ParaId::from(1_u32);
+	let chain_b = ParaId::from(2_u32);
+	let thread_a = ParaId::from(3_u32);
 
 	let paras = vec![(chain_a, true), (chain_b, true), (thread_a, false)];
 	let validators = vec![
@@ -1944,5 +1944,3 @@ fn session_change_wipes() {
 		assert!(<PendingAvailabilityCommitments<Test>>::iter().collect::<Vec<_>>().is_empty());
 	});
 }
-
-// TODO [now]: test `collect_disputed`
