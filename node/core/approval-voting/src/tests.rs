@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with Polkadot.  If not, see <http://www.gnu.org/licenses/>.
 
+use crate::tests::test_constants::TEST_CONFIG;
+
 use super::*;
 use polkadot_node_primitives::{
 	approval::{
@@ -31,8 +33,8 @@ use polkadot_node_subsystem::{
 use polkadot_node_subsystem_test_helpers as test_helpers;
 use polkadot_node_subsystem_util::TimeoutExt;
 use polkadot_overseer::HeadSupportsParachains;
-use polkadot_primitives::v2::{
-	CandidateCommitments, CandidateEvent, CoreIndex, GroupIndex, Header, Id as ParaId,
+use polkadot_primitives::{
+	CandidateCommitments, CandidateEvent, CoreIndex, GroupIndex, Header, Id as ParaId, IndexedVec,
 	ValidationCode, ValidatorSignature,
 };
 use std::time::Duration;
@@ -80,7 +82,7 @@ impl TestSyncOracleHandle {
 }
 
 impl SyncOracle for TestSyncOracle {
-	fn is_major_syncing(&mut self) -> bool {
+	fn is_major_syncing(&self) -> bool {
 		let is_major_syncing = self.flag.load(Ordering::SeqCst);
 
 		if !is_major_syncing {
@@ -92,7 +94,7 @@ impl SyncOracle for TestSyncOracle {
 		is_major_syncing
 	}
 
-	fn is_offline(&mut self) -> bool {
+	fn is_offline(&self) -> bool {
 		unimplemented!("not used in network bridge")
 	}
 }
@@ -111,9 +113,12 @@ fn make_sync_oracle(val: bool) -> (Box<dyn SyncOracle + Send>, TestSyncOracleHan
 pub mod test_constants {
 	use crate::approval_db::v1::Config as DatabaseConfig;
 	const DATA_COL: u32 = 0;
-	pub(crate) const NUM_COLUMNS: u32 = 1;
+	const SESSION_DATA_COL: u32 = 1;
 
-	pub(crate) const TEST_CONFIG: DatabaseConfig = DatabaseConfig { col_data: DATA_COL };
+	pub(crate) const NUM_COLUMNS: u32 = 2;
+
+	pub(crate) const TEST_CONFIG: DatabaseConfig =
+		DatabaseConfig { col_approval_data: DATA_COL, col_session_data: SESSION_DATA_COL };
 }
 
 struct MockSupportsParachains;
@@ -222,7 +227,7 @@ struct MockAssignmentCriteria<Compute, Check>(Compute, Check);
 
 impl<Compute, Check> AssignmentCriteria for MockAssignmentCriteria<Compute, Check>
 where
-	Compute: Fn() -> HashMap<polkadot_primitives::v2::CoreIndex, criteria::OurAssignment>,
+	Compute: Fn() -> HashMap<polkadot_primitives::CoreIndex, criteria::OurAssignment>,
 	Check: Fn(ValidatorIndex) -> Result<DelayTranche, criteria::InvalidAssignment>,
 {
 	fn compute_assignments(
@@ -232,31 +237,28 @@ where
 		_config: &criteria::Config,
 		_leaving_cores: Vec<(
 			CandidateHash,
-			polkadot_primitives::v2::CoreIndex,
-			polkadot_primitives::v2::GroupIndex,
+			polkadot_primitives::CoreIndex,
+			polkadot_primitives::GroupIndex,
 		)>,
-	) -> HashMap<polkadot_primitives::v2::CoreIndex, criteria::OurAssignment> {
+	) -> HashMap<polkadot_primitives::CoreIndex, criteria::OurAssignment> {
 		self.0()
 	}
 
 	fn check_assignment_cert(
 		&self,
-		_claimed_core_index: polkadot_primitives::v2::CoreIndex,
+		_claimed_core_index: polkadot_primitives::CoreIndex,
 		validator_index: ValidatorIndex,
 		_config: &criteria::Config,
 		_relay_vrf_story: polkadot_node_primitives::approval::RelayVRFStory,
 		_assignment: &polkadot_node_primitives::approval::AssignmentCert,
-		_backing_group: polkadot_primitives::v2::GroupIndex,
+		_backing_group: polkadot_primitives::GroupIndex,
 	) -> Result<polkadot_node_primitives::approval::DelayTranche, criteria::InvalidAssignment> {
 		self.1(validator_index)
 	}
 }
 
 impl<F>
-	MockAssignmentCriteria<
-		fn() -> HashMap<polkadot_primitives::v2::CoreIndex, criteria::OurAssignment>,
-		F,
-	>
+	MockAssignmentCriteria<fn() -> HashMap<polkadot_primitives::CoreIndex, criteria::OurAssignment>, F>
 {
 	fn check_only(f: F) -> Self {
 		MockAssignmentCriteria(Default::default, f)
@@ -475,7 +477,7 @@ fn test_harness<T: Future<Output = VirtualOverseer>>(
 
 	let keystore = LocalKeystore::in_memory();
 	let _ = keystore.sr25519_generate_new(
-		polkadot_primitives::v2::PARACHAIN_KEY_TYPE_ID,
+		polkadot_primitives::PARACHAIN_KEY_TYPE_ID,
 		Some(&Sr25519Keyring::Alice.to_seed()),
 	);
 
@@ -487,8 +489,9 @@ fn test_harness<T: Future<Output = VirtualOverseer>>(
 		context,
 		ApprovalVotingSubsystem::with_config(
 			Config {
-				col_data: test_constants::TEST_CONFIG.col_data,
+				col_approval_data: test_constants::TEST_CONFIG.col_approval_data,
 				slot_duration_millis: SLOT_DURATION_MILLIS,
+				col_session_data: TEST_CONFIG.col_session_data,
 			},
 			Arc::new(db),
 			Arc::new(keystore),
@@ -577,7 +580,6 @@ async fn check_and_import_approval(
 	candidate_hash: CandidateHash,
 	session_index: SessionIndex,
 	expect_chain_approved: bool,
-	expect_coordinator: bool,
 	signature_opt: Option<ValidatorSignature>,
 ) -> oneshot::Receiver<ApprovalCheckResult> {
 	let signature = signature_opt.unwrap_or(sign_approval(
@@ -601,18 +603,6 @@ async fn check_and_import_approval(
 			overseer_recv(overseer).await,
 			AllMessages::ChainSelection(ChainSelectionMessage::Approved(b_hash)) => {
 				assert_eq!(b_hash, block_hash);
-			}
-		);
-	}
-	if expect_coordinator {
-		assert_matches!(
-			overseer_recv(overseer).await,
-			AllMessages::DisputeCoordinator(DisputeCoordinatorMessage::ImportStatements {
-				candidate_hash: c_hash,
-				pending_confirmation: None,
-				..
-			}) => {
-				assert_eq!(c_hash, candidate_hash);
 			}
 		);
 	}
@@ -752,7 +742,10 @@ fn session_info(keys: &[Sr25519Keyring]) -> SessionInfo {
 		validators: keys.iter().map(|v| v.public().into()).collect(),
 		discovery_keys: keys.iter().map(|v| v.public().into()).collect(),
 		assignment_keys: keys.iter().map(|v| v.public().into()).collect(),
-		validator_groups: vec![vec![ValidatorIndex(0)], vec![ValidatorIndex(1)]],
+		validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
+			vec![ValidatorIndex(0)],
+			vec![ValidatorIndex(1)],
+		]),
 		n_cores: keys.len() as _,
 		needed_approvals: 2,
 		zeroth_delay_tranche_width: 5,
@@ -821,6 +814,37 @@ async fn import_block(
 	);
 
 	if !fork {
+		assert_matches!(
+			overseer_recv(overseer).await,
+			AllMessages::ChainApi(ChainApiMessage::FinalizedBlockNumber(
+				s_tx,
+			)) => {
+				let _ = s_tx.send(Ok(number));
+			}
+		);
+
+		assert_matches!(
+			overseer_recv(overseer).await,
+			AllMessages::ChainApi(ChainApiMessage::FinalizedBlockHash(
+				block_number,
+				s_tx,
+			)) => {
+				assert_eq!(block_number, number);
+				let _ = s_tx.send(Ok(Some(hashes[number as usize].0)));
+			}
+		);
+
+		assert_matches!(
+			overseer_recv(overseer).await,
+			AllMessages::RuntimeApi(RuntimeApiMessage::Request(
+				h,
+				RuntimeApiRequest::SessionIndexForChild(s_tx),
+			)) => {
+				assert_eq!(h, hashes[number as usize].0);
+				let _ = s_tx.send(Ok(number.into()));
+			}
+		);
+
 		assert_matches!(
 			overseer_recv(overseer).await,
 			AllMessages::RuntimeApi(
@@ -1160,7 +1184,6 @@ fn subsystem_rejects_approval_if_no_candidate_entry() {
 			candidate_hash,
 			session_index,
 			false,
-			false,
 			None,
 		)
 		.await;
@@ -1201,7 +1224,6 @@ fn subsystem_rejects_approval_if_no_block_entry() {
 			validator,
 			candidate_hash,
 			session_index,
-			false,
 			false,
 			None,
 		)
@@ -1262,7 +1284,6 @@ fn subsystem_rejects_approval_before_assignment() {
 			validator,
 			candidate_hash,
 			session_index,
-			false,
 			false,
 			None,
 		)
@@ -1488,7 +1509,6 @@ fn subsystem_accepts_and_imports_approval_after_assignment() {
 			candidate_hash,
 			session_index,
 			true,
-			true,
 			None,
 		)
 		.await;
@@ -1538,11 +1558,11 @@ fn subsystem_second_approval_import_only_schedules_wakeups() {
 			Sr25519Keyring::Eve,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2)],
 				vec![ValidatorIndex(3), ValidatorIndex(4)],
-			],
+			]),
 			needed_approvals: 1,
 			..session_info(&validators)
 		};
@@ -1582,7 +1602,6 @@ fn subsystem_second_approval_import_only_schedules_wakeups() {
 			candidate_hash,
 			session_index,
 			false,
-			true,
 			None,
 		)
 		.await;
@@ -1599,7 +1618,6 @@ fn subsystem_second_approval_import_only_schedules_wakeups() {
 			validator,
 			candidate_hash,
 			session_index,
-			false,
 			false,
 			None,
 		)
@@ -1877,11 +1895,11 @@ fn import_checked_approval_updates_entries_and_schedules() {
 			Sr25519Keyring::Eve,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2)],
 				vec![ValidatorIndex(3), ValidatorIndex(4)],
-			],
+			]),
 			..session_info(&validators)
 		};
 
@@ -1936,7 +1954,6 @@ fn import_checked_approval_updates_entries_and_schedules() {
 			candidate_hash,
 			session_index,
 			false,
-			true,
 			Some(sig_a),
 		)
 		.await;
@@ -1963,7 +1980,6 @@ fn import_checked_approval_updates_entries_and_schedules() {
 			validator_index_b,
 			candidate_hash,
 			session_index,
-			true,
 			true,
 			Some(sig_b),
 		)
@@ -2036,11 +2052,11 @@ fn subsystem_import_checked_approval_sets_one_block_bit_at_a_time() {
 			Sr25519Keyring::Eve,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2)],
 				vec![ValidatorIndex(3), ValidatorIndex(4)],
-			],
+			]),
 			..session_info(&validators)
 		};
 
@@ -2104,7 +2120,6 @@ fn subsystem_import_checked_approval_sets_one_block_bit_at_a_time() {
 				*candidate_hash,
 				session_index,
 				expect_block_approved,
-				true,
 				Some(signature),
 			)
 			.await;
@@ -2207,7 +2222,6 @@ fn approved_ancestor_test(
 				validator,
 				candidate_hash,
 				i as u32 + 1,
-				true,
 				true,
 				None,
 			)
@@ -2328,11 +2342,11 @@ fn subsystem_validate_approvals_cache() {
 			Sr25519Keyring::Eve,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2)],
 				vec![ValidatorIndex(3), ValidatorIndex(4)],
-			],
+			]),
 			..session_info(&validators)
 		};
 
@@ -2540,11 +2554,11 @@ where
 			Sr25519Keyring::Ferdie,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2), ValidatorIndex(3)],
 				vec![ValidatorIndex(4), ValidatorIndex(5)],
-			],
+			]),
 			relay_vrf_modulo_samples: 2,
 			no_show_slots,
 			..session_info(&validators)
@@ -2586,7 +2600,6 @@ where
 				candidate_hash,
 				1,
 				expect_chain_approved,
-				true,
 				Some(sign_approval(
 					validators[validator_index as usize].clone(),
 					candidate_hash,
@@ -2861,11 +2874,11 @@ fn pre_covers_dont_stall_approval() {
 			Sr25519Keyring::One,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2), ValidatorIndex(5)],
 				vec![ValidatorIndex(3), ValidatorIndex(4)],
-			],
+			]),
 			..session_info(&validators)
 		};
 
@@ -2930,7 +2943,6 @@ fn pre_covers_dont_stall_approval() {
 			candidate_hash,
 			session_index,
 			false,
-			true,
 			Some(sig_b),
 		)
 		.await;
@@ -2946,7 +2958,6 @@ fn pre_covers_dont_stall_approval() {
 			candidate_hash,
 			session_index,
 			false,
-			true,
 			Some(sig_c),
 		)
 		.await;
@@ -3040,11 +3051,11 @@ fn waits_until_approving_assignments_are_old_enough() {
 			Sr25519Keyring::One,
 		];
 		let session_info = SessionInfo {
-			validator_groups: vec![
+			validator_groups: IndexedVec::<GroupIndex, Vec<ValidatorIndex>>::from(vec![
 				vec![ValidatorIndex(0), ValidatorIndex(1)],
 				vec![ValidatorIndex(2), ValidatorIndex(5)],
 				vec![ValidatorIndex(3), ValidatorIndex(4)],
-			],
+			]),
 			..session_info(&validators)
 		};
 
@@ -3101,7 +3112,6 @@ fn waits_until_approving_assignments_are_old_enough() {
 			candidate_hash,
 			session_index,
 			false,
-			true,
 			Some(sig_a),
 		)
 		.await;
@@ -3118,7 +3128,6 @@ fn waits_until_approving_assignments_are_old_enough() {
 			candidate_hash,
 			session_index,
 			false,
-			true,
 			Some(sig_b),
 		)
 		.await;

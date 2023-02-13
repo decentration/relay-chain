@@ -32,13 +32,13 @@
 //!
 //!  Versioned (v1 module): The actual requests and responses as sent over the network.
 
-use std::{borrow::Cow, time::Duration, u64};
+use std::{collections::HashMap, time::Duration, u64};
 
 use futures::channel::mpsc;
-use polkadot_primitives::v2::{MAX_CODE_SIZE, MAX_POV_SIZE};
-use strum::EnumIter;
+use polkadot_primitives::{MAX_CODE_SIZE, MAX_POV_SIZE};
+use strum::{EnumIter, IntoEnumIterator};
 
-pub use sc_network::{config as network, config::RequestResponseConfig};
+pub use sc_network::{config as network, config::RequestResponseConfig, ProtocolName};
 
 /// Everything related to handling of incoming requests.
 pub mod incoming;
@@ -104,7 +104,7 @@ const STATEMENTS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// We don't want a slow peer to slow down all the others, at the same time we want to get out the
 /// data quickly in full to at least some peers (as this will reduce load on us as they then can
-/// start serving the data). So this value is a tradeoff. 3 seems to be sensible. So we would need
+/// start serving the data). So this value is a trade-off. 3 seems to be sensible. So we would need
 /// to have 3 slow nodes connected, to delay transfer for others by `STATEMENTS_TIMEOUT`.
 pub const MAX_PARALLEL_STATEMENT_REQUESTS: u32 = 3;
 
@@ -121,48 +121,81 @@ const POV_RESPONSE_SIZE: u64 = MAX_POV_SIZE as u64 + 10_000;
 /// This is `MAX_CODE_SIZE` plus some additional space for protocol overhead.
 const STATEMENT_RESPONSE_SIZE: u64 = MAX_CODE_SIZE as u64 + 10_000;
 
+/// We can have relative large timeouts here, there is no value of hitting a
+/// timeout as we want to get statements through to each node in any case.
+pub const DISPUTE_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
+
 impl Protocol {
+	/// Get a configuration for a given Request response protocol.
+	///
+	/// Returns a `ProtocolConfig` for this protocol.
+	/// Use this if you plan only to send requests for this protocol.
+	pub fn get_outbound_only_config(
+		self,
+		req_protocol_names: &ReqProtocolNames,
+	) -> RequestResponseConfig {
+		self.create_config(req_protocol_names, None)
+	}
+
 	/// Get a configuration for a given Request response protocol.
 	///
 	/// Returns a receiver for messages received on this protocol and the requested
 	/// `ProtocolConfig`.
-	pub fn get_config(self) -> (mpsc::Receiver<network::IncomingRequest>, RequestResponseConfig) {
-		let p_name = self.into_protocol_name();
+	pub fn get_config(
+		self,
+		req_protocol_names: &ReqProtocolNames,
+	) -> (mpsc::Receiver<network::IncomingRequest>, RequestResponseConfig) {
 		let (tx, rx) = mpsc::channel(self.get_channel_size());
-		let cfg = match self {
+		let cfg = self.create_config(req_protocol_names, Some(tx));
+		(rx, cfg)
+	}
+
+	fn create_config(
+		self,
+		req_protocol_names: &ReqProtocolNames,
+		tx: Option<mpsc::Sender<network::IncomingRequest>>,
+	) -> RequestResponseConfig {
+		let name = req_protocol_names.get_name(self);
+		let fallback_names = self.get_fallback_names();
+		match self {
 			Protocol::ChunkFetchingV1 => RequestResponseConfig {
-				name: p_name,
+				name,
+				fallback_names,
 				max_request_size: 1_000,
 				max_response_size: POV_RESPONSE_SIZE as u64 * 3,
 				// We are connected to all validators:
 				request_timeout: CHUNK_REQUEST_TIMEOUT,
-				inbound_queue: Some(tx),
+				inbound_queue: tx,
 			},
 			Protocol::CollationFetchingV1 => RequestResponseConfig {
-				name: p_name,
+				name,
+				fallback_names,
 				max_request_size: 1_000,
 				max_response_size: POV_RESPONSE_SIZE,
 				// Taken from initial implementation in collator protocol:
 				request_timeout: POV_REQUEST_TIMEOUT_CONNECTED,
-				inbound_queue: Some(tx),
+				inbound_queue: tx,
 			},
 			Protocol::PoVFetchingV1 => RequestResponseConfig {
-				name: p_name,
+				name,
+				fallback_names,
 				max_request_size: 1_000,
 				max_response_size: POV_RESPONSE_SIZE,
 				request_timeout: POV_REQUEST_TIMEOUT_CONNECTED,
-				inbound_queue: Some(tx),
+				inbound_queue: tx,
 			},
 			Protocol::AvailableDataFetchingV1 => RequestResponseConfig {
-				name: p_name,
+				name,
+				fallback_names,
 				max_request_size: 1_000,
 				// Available data size is dominated by the PoV size.
 				max_response_size: POV_RESPONSE_SIZE,
 				request_timeout: POV_REQUEST_TIMEOUT_CONNECTED,
-				inbound_queue: Some(tx),
+				inbound_queue: tx,
 			},
 			Protocol::StatementFetchingV1 => RequestResponseConfig {
-				name: p_name,
+				name,
+				fallback_names,
 				max_request_size: 1_000,
 				// Available data size is dominated code size.
 				max_response_size: STATEMENT_RESPONSE_SIZE,
@@ -176,21 +209,19 @@ impl Protocol {
 				// fail, but this is desired, so we can quickly move on to a faster one - we should
 				// also decrease its reputation.
 				request_timeout: Duration::from_secs(1),
-				inbound_queue: Some(tx),
+				inbound_queue: tx,
 			},
 			Protocol::DisputeSendingV1 => RequestResponseConfig {
-				name: p_name,
+				name,
+				fallback_names,
 				max_request_size: 1_000,
 				/// Responses are just confirmation, in essence not even a bit. So 100 seems
 				/// plenty.
 				max_response_size: 100,
-				/// We can have relative large timeouts here, there is no value of hitting a
-				/// timeout as we want to get statements through to each node in any case.
-				request_timeout: Duration::from_secs(12),
-				inbound_queue: Some(tx),
+				request_timeout: DISPUTE_REQUEST_TIMEOUT,
+				inbound_queue: tx,
 			},
-		};
-		(rx, cfg)
+		}
 	}
 
 	// Channel sizes for the supported protocols.
@@ -237,13 +268,13 @@ impl Protocol {
 		}
 	}
 
-	/// Get the protocol name of this protocol, as understood by substrate networking.
-	pub fn into_protocol_name(self) -> Cow<'static, str> {
-		self.get_protocol_name_static().into()
+	/// Fallback protocol names of this protocol, as understood by substrate networking.
+	fn get_fallback_names(self) -> Vec<ProtocolName> {
+		std::iter::once(self.get_legacy_name().into()).collect()
 	}
 
-	/// Get the protocol name associated with each peer set as static str.
-	pub const fn get_protocol_name_static(self) -> &'static str {
+	/// Legacy protocol name associated with each peer set.
+	const fn get_legacy_name(self) -> &'static str {
 		match self {
 			Protocol::ChunkFetchingV1 => "/polkadot/req_chunk/1",
 			Protocol::CollationFetchingV1 => "/polkadot/req_collation/1",
@@ -262,4 +293,52 @@ pub trait IsRequest {
 
 	/// What protocol this `Request` implements.
 	const PROTOCOL: Protocol;
+}
+
+/// Type for getting on the wire [`Protocol`] names using genesis hash & fork id.
+pub struct ReqProtocolNames {
+	names: HashMap<Protocol, ProtocolName>,
+}
+
+impl ReqProtocolNames {
+	/// Construct [`ReqProtocolNames`] from `genesis_hash` and `fork_id`.
+	pub fn new<Hash: AsRef<[u8]>>(genesis_hash: Hash, fork_id: Option<&str>) -> Self {
+		let mut names = HashMap::new();
+		for protocol in Protocol::iter() {
+			names.insert(protocol, Self::generate_name(protocol, &genesis_hash, fork_id));
+		}
+		Self { names }
+	}
+
+	/// Get on the wire [`Protocol`] name.
+	pub fn get_name(&self, protocol: Protocol) -> ProtocolName {
+		self.names
+			.get(&protocol)
+			.expect("All `Protocol` enum variants are added above via `strum`; qed")
+			.clone()
+	}
+
+	/// Protocol name of this protocol based on `genesis_hash` and `fork_id`.
+	fn generate_name<Hash: AsRef<[u8]>>(
+		protocol: Protocol,
+		genesis_hash: &Hash,
+		fork_id: Option<&str>,
+	) -> ProtocolName {
+		let prefix = if let Some(fork_id) = fork_id {
+			format!("/{}/{}", hex::encode(genesis_hash), fork_id)
+		} else {
+			format!("/{}", hex::encode(genesis_hash))
+		};
+
+		let short_name = match protocol {
+			Protocol::ChunkFetchingV1 => "/req_chunk/1",
+			Protocol::CollationFetchingV1 => "/req_collation/1",
+			Protocol::PoVFetchingV1 => "/req_pov/1",
+			Protocol::AvailableDataFetchingV1 => "/req_available_data/1",
+			Protocol::StatementFetchingV1 => "/req_statement/1",
+			Protocol::DisputeSendingV1 => "/send_dispute/1",
+		};
+
+		format!("{}{}", prefix, short_name).into()
+	}
 }

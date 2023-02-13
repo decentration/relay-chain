@@ -21,9 +21,9 @@
 use std::sync::Arc;
 
 use jsonrpsee::RpcModule;
-use polkadot_primitives::v2::{AccountId, Balance, Block, BlockNumber, Hash, Nonce};
+use polkadot_primitives::{AccountId, Balance, Block, BlockNumber, Hash, Nonce};
 use sc_client_api::AuxStore;
-use sc_consensus_babe::Epoch;
+use sc_consensus_babe::{BabeConfiguration, Epoch};
 use sc_finality_grandpa::FinalityProofProvider;
 pub use sc_rpc::{DenyUnsafe, SubscriptionTaskExecutor};
 use sp_api::ProvideRuntimeApi;
@@ -40,7 +40,7 @@ pub type RpcExtension = RpcModule<()>;
 /// Extra dependencies for BABE.
 pub struct BabeDeps {
 	/// BABE protocol config.
-	pub babe_config: sc_consensus_babe::Config,
+	pub babe_config: BabeConfiguration,
 	/// BABE pending epoch changes.
 	pub shared_epoch_changes: sc_consensus_epochs::SharedEpochChanges<Block, Epoch>,
 	/// The keystore that manages the keys of the node.
@@ -61,11 +61,13 @@ pub struct GrandpaDeps<B> {
 	pub finality_provider: Arc<FinalityProofProvider<B, Block>>,
 }
 
-use beefy_gadget::notification::{BeefyBestBlockStream, BeefySignedCommitmentStream};
+use beefy_gadget::communication::notification::{
+	BeefyBestBlockStream, BeefyVersionedFinalityProofStream,
+};
 /// Dependencies for BEEFY
 pub struct BeefyDeps {
-	/// Receives notifications about signed commitment events from BEEFY.
-	pub beefy_commitment_stream: BeefySignedCommitmentStream<Block>,
+	/// Receives notifications about finality proof events from BEEFY.
+	pub beefy_finality_proof_stream: BeefyVersionedFinalityProofStream<Block>,
 	/// Receives notifications about best block events from BEEFY.
 	pub beefy_best_block_stream: BeefyBestBlockStream<Block>,
 	/// Executor to drive the subscription manager in the BEEFY RPC handler.
@@ -106,7 +108,7 @@ where
 		+ Sync
 		+ 'static,
 	C::Api: frame_rpc_system::AccountNonceApi<Block, AccountId, Nonce>,
-	C::Api: pallet_mmr_rpc::MmrRuntimeApi<Block, <Block as sp_runtime::traits::Block>::Hash>,
+	C::Api: mmr_rpc::MmrRuntimeApi<Block, <Block as sp_runtime::traits::Block>::Hash, BlockNumber>,
 	C::Api: pallet_transaction_payment_rpc::TransactionPaymentRuntimeApi<Block, Balance>,
 	C::Api: BabeApi<Block>,
 	C::Api: BlockBuilder<Block>,
@@ -117,7 +119,7 @@ where
 {
 	use beefy_gadget_rpc::{Beefy, BeefyApiServer};
 	use frame_rpc_system::{System, SystemApiServer};
-	use pallet_mmr_rpc::{Mmr, MmrApiServer};
+	use mmr_rpc::{Mmr, MmrApiServer};
 	use pallet_transaction_payment_rpc::{TransactionPayment, TransactionPaymentApiServer};
 	use sc_consensus_babe_rpc::{Babe, BabeApiServer};
 	use sc_finality_grandpa_rpc::{Grandpa, GrandpaApiServer};
@@ -167,7 +169,7 @@ where
 
 	io.merge(
 		Beefy::<Block>::new(
-			beefy.beefy_commitment_stream,
+			beefy.beefy_finality_proof_stream,
 			beefy.beefy_best_block_stream,
 			beefy.subscription_executor,
 		)?

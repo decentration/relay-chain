@@ -24,7 +24,10 @@ use polkadot_node_core_av_store::Config as AvailabilityConfig;
 use polkadot_node_core_candidate_validation::Config as CandidateValidationConfig;
 use polkadot_node_core_chain_selection::Config as ChainSelectionConfig;
 use polkadot_node_core_dispute_coordinator::Config as DisputeCoordinatorConfig;
-use polkadot_node_network_protocol::request_response::{v1 as request_v1, IncomingRequestReceiver};
+use polkadot_node_network_protocol::{
+	peer_set::PeerSetProtocolNames,
+	request_response::{v1 as request_v1, IncomingRequestReceiver, ReqProtocolNames},
+};
 #[cfg(any(feature = "malus", test))]
 pub use polkadot_overseer::{
 	dummy::{dummy_overseer_builder, DummySubsystem},
@@ -39,6 +42,7 @@ use polkadot_primitives::runtime_api::ParachainHost;
 use sc_authority_discovery::Service as AuthorityDiscoveryService;
 use sc_client_api::AuxStore;
 use sc_keystore::LocalKeystore;
+use sc_network_common::service::NetworkStateInfo;
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
 use sp_consensus_babe::BabeApi;
@@ -117,11 +121,15 @@ where
 	pub pvf_checker_enabled: bool,
 	/// Overseer channel capacity override.
 	pub overseer_message_channel_capacity_override: Option<usize>,
+	/// Request-response protocol names source.
+	pub req_protocol_names: ReqProtocolNames,
+	/// [`PeerSet`] protocol names to protocols mapping.
+	pub peerset_protocol_names: PeerSetProtocolNames,
 }
 
 /// Obtain a prepared `OverseerBuilder`, that is initialized
 /// with all default values.
-pub fn prepared_overseer_builder<'a, Spawner, RuntimeClient>(
+pub fn prepared_overseer_builder<Spawner, RuntimeClient>(
 	OverseerGenArgs {
 		leaves,
 		keystore,
@@ -145,7 +153,9 @@ pub fn prepared_overseer_builder<'a, Spawner, RuntimeClient>(
 		dispute_coordinator_config,
 		pvf_checker_enabled,
 		overseer_message_channel_capacity_override,
-	}: OverseerGenArgs<'a, Spawner, RuntimeClient>,
+		req_protocol_names,
+		peerset_protocol_names,
+	}: OverseerGenArgs<Spawner, RuntimeClient>,
 ) -> Result<
 	InitializedOverseerBuilder<
 		SpawnGlue<Spawner>,
@@ -193,17 +203,21 @@ where
 	let spawner = SpawnGlue(spawner);
 
 	let network_bridge_metrics: NetworkBridgeMetrics = Metrics::register(registry)?;
+
 	let builder = Overseer::builder()
 		.network_bridge_tx(NetworkBridgeTxSubsystem::new(
 			network_service.clone(),
 			authority_discovery_service.clone(),
 			network_bridge_metrics.clone(),
+			req_protocol_names,
+			peerset_protocol_names.clone(),
 		))
 		.network_bridge_rx(NetworkBridgeRxSubsystem::new(
 			network_service.clone(),
 			authority_discovery_service.clone(),
 			Box::new(network_service.clone()),
 			network_bridge_metrics,
+			peerset_protocol_names,
 		))
 		.availability_distribution(AvailabilityDistributionSubsystem::new(
 			keystore.clone(),
@@ -243,7 +257,7 @@ where
 		.collator_protocol({
 			let side = match is_collator {
 				IsCollator::Yes(collator_pair) => ProtocolSide::Collator(
-					network_service.local_peer_id().clone(),
+					network_service.local_peer_id(),
 					collator_pair,
 					collation_req_receiver,
 					Metrics::register(registry)?,
@@ -320,10 +334,10 @@ where
 /// would do.
 pub trait OverseerGen {
 	/// Overwrite the full generation of the overseer, including the subsystems.
-	fn generate<'a, Spawner, RuntimeClient>(
+	fn generate<Spawner, RuntimeClient>(
 		&self,
 		connector: OverseerConnector,
-		args: OverseerGenArgs<'a, Spawner, RuntimeClient>,
+		args: OverseerGenArgs<Spawner, RuntimeClient>,
 	) -> Result<(Overseer<SpawnGlue<Spawner>, Arc<RuntimeClient>>, OverseerHandle), Error>
 	where
 		RuntimeClient: 'static + ProvideRuntimeApi<Block> + HeaderBackend<Block> + AuxStore,
@@ -344,10 +358,10 @@ use polkadot_overseer::KNOWN_LEAVES_CACHE_SIZE;
 pub struct RealOverseerGen;
 
 impl OverseerGen for RealOverseerGen {
-	fn generate<'a, Spawner, RuntimeClient>(
+	fn generate<Spawner, RuntimeClient>(
 		&self,
 		connector: OverseerConnector,
-		args: OverseerGenArgs<'a, Spawner, RuntimeClient>,
+		args: OverseerGenArgs<Spawner, RuntimeClient>,
 	) -> Result<(Overseer<SpawnGlue<Spawner>, Arc<RuntimeClient>>, OverseerHandle), Error>
 	where
 		RuntimeClient: 'static + ProvideRuntimeApi<Block> + HeaderBackend<Block> + AuxStore,

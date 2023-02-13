@@ -26,7 +26,7 @@ use polkadot_node_primitives::{
 	approval::{
 		BlockApprovalMeta, DelayTranche, IndirectAssignmentCert, IndirectSignedApprovalVote,
 	},
-	SignedDisputeStatement, ValidationResult, APPROVAL_EXECUTION_TIMEOUT,
+	ValidationResult, APPROVAL_EXECUTION_TIMEOUT,
 };
 use polkadot_node_subsystem::{
 	errors::RecoveryError,
@@ -44,12 +44,11 @@ use polkadot_node_subsystem_util::{
 	database::Database,
 	metrics::{self, prometheus},
 	rolling_session_window::{
-		new_session_window_size, RollingSessionWindow, SessionWindowSize, SessionWindowUpdate,
-		SessionsUnavailable,
+		DatabaseParams, RollingSessionWindow, SessionWindowUpdate, SessionsUnavailable,
 	},
 	TimeoutExt,
 };
-use polkadot_primitives::v2::{
+use polkadot_primitives::{
 	ApprovalVote, BlockNumber, CandidateHash, CandidateIndex, CandidateReceipt, DisputeStatement,
 	GroupIndex, Hash, SessionIndex, SessionInfo, ValidDisputeStatementKind, ValidatorId,
 	ValidatorIndex, ValidatorPair, ValidatorSignature,
@@ -70,6 +69,7 @@ use std::{
 	collections::{
 		btree_map::Entry as BTMEntry, hash_map::Entry as HMEntry, BTreeMap, HashMap, HashSet,
 	},
+	num::NonZeroUsize,
 	sync::Arc,
 	time::Duration,
 };
@@ -96,10 +96,17 @@ use crate::{
 #[cfg(test)]
 mod tests;
 
-pub const APPROVAL_SESSIONS: SessionWindowSize = new_session_window_size!(6);
-
 const APPROVAL_CHECKING_TIMEOUT: Duration = Duration::from_secs(120);
-const APPROVAL_CACHE_SIZE: usize = 1024;
+/// How long are we willing to wait for approval signatures?
+///
+/// Value rather arbitrarily: Should not be hit in practice, it exists to more easily diagnose dead
+/// lock issues for example.
+const WAIT_FOR_SIGS_TIMEOUT: Duration = Duration::from_millis(500);
+const APPROVAL_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(1024) {
+	Some(cap) => cap,
+	None => panic!("Approval cache size must be non-zero."),
+};
+
 const TICK_TOO_FAR_IN_FUTURE: Tick = 20; // 10 seconds.
 const APPROVAL_DELAY: Tick = 2;
 const LOG_TARGET: &str = "parachain::approval-voting";
@@ -108,7 +115,9 @@ const LOG_TARGET: &str = "parachain::approval-voting";
 #[derive(Debug, Clone)]
 pub struct Config {
 	/// The column family in the DB where approval-voting data is stored.
-	pub col_data: u32,
+	pub col_approval_data: u32,
+	/// The of the DB where rolling session info is stored.
+	pub col_session_data: u32,
 	/// The slot duration of the consensus algorithm, in milliseconds. Should be evenly
 	/// divisible by 500.
 	pub slot_duration_millis: u64,
@@ -152,6 +161,7 @@ struct MetricsInner {
 	block_approval_time_ticks: prometheus::Histogram,
 	time_db_transaction: prometheus::Histogram,
 	time_recover_and_approve: prometheus::Histogram,
+	candidate_signatures_requests_total: prometheus::Counter<prometheus::U64>,
 }
 
 /// Approval Voting metrics.
@@ -222,6 +232,12 @@ impl Metrics {
 	fn on_block_approved(&self, ticks: Tick) {
 		if let Some(metrics) = &self.0 {
 			metrics.block_approval_time_ticks.observe(ticks as f64);
+		}
+	}
+
+	fn on_candidate_signatures_request(&self) {
+		if let Some(metrics) = &self.0 {
+			metrics.candidate_signatures_requests_total.inc();
 		}
 	}
 
@@ -315,6 +331,13 @@ impl metrics::Metrics for Metrics {
 				)?,
 				registry,
 			)?,
+			candidate_signatures_requests_total: prometheus::register(
+				prometheus::Counter::new(
+					"polkadot_parachain_approval_candidate_signatures_requests_total",
+					"Number of times signatures got requested by other subsystems",
+				)?,
+				registry,
+			)?,
 		};
 
 		Ok(Metrics(Some(metrics)))
@@ -334,7 +357,10 @@ impl ApprovalVotingSubsystem {
 			keystore,
 			slot_duration_millis: config.slot_duration_millis,
 			db,
-			db_config: DatabaseConfig { col_data: config.col_data },
+			db_config: DatabaseConfig {
+				col_approval_data: config.col_approval_data,
+				col_session_data: config.col_session_data,
+			},
 			mode: Mode::Syncing(sync_oracle),
 			metrics,
 		}
@@ -343,7 +369,10 @@ impl ApprovalVotingSubsystem {
 	/// Revert to the block corresponding to the specified `hash`.
 	/// The operation is not allowed for blocks older than the last finalized one.
 	pub fn revert_to(&self, hash: Hash) -> Result<(), SubsystemError> {
-		let config = approval_db::v1::Config { col_data: self.db_config.col_data };
+		let config = approval_db::v1::Config {
+			col_approval_data: self.db_config.col_approval_data,
+			col_session_data: self.db_config.col_session_data,
+		};
 		let mut backend = approval_db::v1::DbBackend::new(self.db.clone(), config);
 		let mut overlay = OverlayedBackend::new(&backend);
 
@@ -352,6 +381,25 @@ impl ApprovalVotingSubsystem {
 		let ops = overlay.into_write_ops();
 		backend.write(ops)
 	}
+}
+
+// Checks and logs approval vote db state. It is perfectly normal to start with an
+// empty approval vote DB if we changed DB type or the node will sync from scratch.
+fn db_sanity_check(db: Arc<dyn Database>, config: DatabaseConfig) -> SubsystemResult<()> {
+	let backend = DbBackend::new(db, config);
+	let all_blocks = backend.load_all_blocks()?;
+
+	if all_blocks.is_empty() {
+		gum::info!(target: LOG_TARGET, "Starting with an empty approval vote DB.",);
+	} else {
+		gum::debug!(
+			target: LOG_TARGET,
+			"Starting with {} blocks in approval vote DB.",
+			all_blocks.len()
+		);
+	}
+
+	Ok(())
 }
 
 #[overseer::subsystem(ApprovalVoting, error = SubsystemError, prefix = self::overseer)]
@@ -573,10 +621,7 @@ impl CurrentlyCheckingSet {
 					.candidate_hash_map
 					.remove(&approval_state.candidate_hash)
 					.unwrap_or_default();
-				approvals_cache.put(
-					approval_state.candidate_hash.clone(),
-					approval_state.approval_outcome.clone(),
-				);
+				approvals_cache.put(approval_state.candidate_hash, approval_state.approval_outcome);
 				return (out, approval_state)
 			}
 		}
@@ -591,6 +636,9 @@ struct State {
 	slot_duration_millis: u64,
 	clock: Box<dyn Clock + Send + Sync>,
 	assignment_criteria: Box<dyn AssignmentCriteria + Send + Sync>,
+	// Require for `RollingSessionWindow`.
+	db_config: DatabaseConfig,
+	db: Arc<dyn Database>,
 }
 
 #[overseer::contextbounds(ApprovalVoting, prefix = self::overseer)]
@@ -612,8 +660,17 @@ impl State {
 		match session_window {
 			None => {
 				let sender = ctx.sender().clone();
-				self.session_window =
-					Some(RollingSessionWindow::new(sender, APPROVAL_SESSIONS, head).await?);
+				self.session_window = Some(
+					RollingSessionWindow::new(
+						sender,
+						head,
+						DatabaseParams {
+							db: self.db.clone(),
+							db_column: self.db_config.col_session_data,
+						},
+					)
+					.await?,
+				);
 				Ok(None)
 			},
 			Some(mut session_window) => {
@@ -691,13 +748,6 @@ enum Action {
 		candidate: CandidateReceipt,
 		backing_group: GroupIndex,
 	},
-	InformDisputeCoordinator {
-		candidate_hash: CandidateHash,
-		candidate_receipt: CandidateReceipt,
-		session: SessionIndex,
-		dispute_statement: SignedDisputeStatement,
-		validator_index: ValidatorIndex,
-	},
 	NoteApprovedInChainSelection(Hash),
 	IssueApproval(CandidateHash, ApprovalVoteRequest),
 	BecomeActive,
@@ -715,12 +765,18 @@ async fn run<B, Context>(
 where
 	B: Backend,
 {
+	if let Err(err) = db_sanity_check(subsystem.db.clone(), subsystem.db_config) {
+		gum::warn!(target: LOG_TARGET, ?err, "Could not run approval vote DB sanity check");
+	}
+
 	let mut state = State {
 		session_window: None,
 		keystore: subsystem.keystore,
 		slot_duration_millis: subsystem.slot_duration_millis,
 		clock,
 		assignment_criteria,
+		db_config: subsystem.db_config,
+		db: subsystem.db,
 	};
 
 	let mut wakeups = Wakeups::default();
@@ -957,22 +1013,6 @@ async fn handle_actions<Context>(
 					Some(_) => {},
 				}
 			},
-			Action::InformDisputeCoordinator {
-				candidate_hash,
-				candidate_receipt,
-				session,
-				dispute_statement,
-				validator_index,
-			} => {
-				ctx.send_message(DisputeCoordinatorMessage::ImportStatements {
-					candidate_hash,
-					candidate_receipt,
-					session,
-					statements: vec![(dispute_statement, validator_index)],
-					pending_confirmation: None,
-				})
-				.await;
-			},
 			Action::NoteApprovedInChainSelection(block_hash) => {
 				ctx.send_message(ChainSelectionMessage::Approved(block_hash)).await;
 			},
@@ -1101,7 +1141,7 @@ async fn handle_from_overseer<Context>(
 		FromOrchestra::Signal(OverseerSignal::ActiveLeaves(update)) => {
 			let mut actions = Vec::new();
 
-			for activated in update.activated {
+			if let Some(activated) = update.activated {
 				let head = activated.hash;
 				match import::handle_new_head(ctx, state, db, head, &*last_finalized_height).await {
 					Err(e) => return Err(SubsystemError::with_origin("db", e)),
@@ -1192,10 +1232,107 @@ async fn handle_from_overseer<Context>(
 
 				Vec::new()
 			},
+			ApprovalVotingMessage::GetApprovalSignaturesForCandidate(candidate_hash, tx) => {
+				metrics.on_candidate_signatures_request();
+				get_approval_signatures_for_candidate(ctx, db, candidate_hash, tx).await?;
+				Vec::new()
+			},
 		},
 	};
 
 	Ok(actions)
+}
+
+/// Retrieve approval signatures.
+///
+/// This involves an unbounded message send to approval-distribution, the caller has to ensure that
+/// calls to this function are infrequent and bounded.
+#[overseer::contextbounds(ApprovalVoting, prefix = self::overseer)]
+async fn get_approval_signatures_for_candidate<Context>(
+	ctx: &mut Context,
+	db: &OverlayedBackend<'_, impl Backend>,
+	candidate_hash: CandidateHash,
+	tx: oneshot::Sender<HashMap<ValidatorIndex, ValidatorSignature>>,
+) -> SubsystemResult<()> {
+	let send_votes = |votes| {
+		if let Err(_) = tx.send(votes) {
+			gum::debug!(
+				target: LOG_TARGET,
+				"Sending approval signatures back failed, as receiver got closed."
+			);
+		}
+	};
+	let entry = match db.load_candidate_entry(&candidate_hash)? {
+		None => {
+			send_votes(HashMap::new());
+			gum::debug!(
+				target: LOG_TARGET,
+				?candidate_hash,
+				"Sent back empty votes because the candidate was not found in db."
+			);
+			return Ok(())
+		},
+		Some(e) => e,
+	};
+
+	let relay_hashes = entry.block_assignments.keys();
+
+	let mut candidate_indices = HashSet::new();
+	// Retrieve `CoreIndices`/`CandidateIndices` as required by approval-distribution:
+	for hash in relay_hashes {
+		let entry = match db.load_block_entry(hash)? {
+			None => {
+				gum::debug!(
+					target: LOG_TARGET,
+					?candidate_hash,
+					?hash,
+					"Block entry for assignment missing."
+				);
+				continue
+			},
+			Some(e) => e,
+		};
+		for (candidate_index, (_core_index, c_hash)) in entry.candidates().iter().enumerate() {
+			if c_hash == &candidate_hash {
+				candidate_indices.insert((*hash, candidate_index as u32));
+				break
+			}
+		}
+	}
+
+	let mut sender = ctx.sender().clone();
+	let get_approvals = async move {
+		let (tx_distribution, rx_distribution) = oneshot::channel();
+		sender.send_unbounded_message(ApprovalDistributionMessage::GetApprovalSignatures(
+			candidate_indices,
+			tx_distribution,
+		));
+
+		// Because of the unbounded sending and the nature of the call (just fetching data from state),
+		// this should not block long:
+		match rx_distribution.timeout(WAIT_FOR_SIGS_TIMEOUT).await {
+			None => {
+				gum::warn!(
+					target: LOG_TARGET,
+					"Waiting for approval signatures timed out - dead lock?"
+				);
+			},
+			Some(Err(_)) => gum::debug!(
+				target: LOG_TARGET,
+				"Request for approval signatures got cancelled by `approval-distribution`."
+			),
+			Some(Ok(votes)) => send_votes(votes),
+		}
+	};
+
+	// No need to block subsystem on this (also required to break cycle).
+	// We should not be sending this message frequently - caller must make sure this is bounded.
+	gum::trace!(
+		target: LOG_TARGET,
+		?candidate_hash,
+		"Spawning task for fetching sinatures from approval-distribution"
+	);
+	ctx.spawn("get-approval-signatures", Box::pin(get_approvals))
 }
 
 #[overseer::contextbounds(ApprovalVoting, prefix = self::overseer)]
@@ -1710,26 +1847,24 @@ fn check_and_import_approval<T>(
 		)),
 	};
 
-	let pubkey = match session_info.validators.get(approval.validator.0 as usize) {
+	let pubkey = match session_info.validators.get(approval.validator) {
 		Some(k) => k,
 		None => respond_early!(ApprovalCheckResult::Bad(
 			ApprovalCheckError::InvalidValidatorIndex(approval.validator),
 		)),
 	};
 
-	// Transform the approval vote into the wrapper used to import statements into disputes.
-	// This also does signature checking.
-	let signed_dispute_statement = match SignedDisputeStatement::new_checked(
-		DisputeStatement::Valid(ValidDisputeStatementKind::ApprovalChecking),
+	// Signature check:
+	match DisputeStatement::Valid(ValidDisputeStatementKind::ApprovalChecking).check_signature(
+		&pubkey,
 		approved_candidate_hash,
 		block_entry.session(),
-		pubkey.clone(),
-		approval.signature.clone(),
+		&approval.signature,
 	) {
 		Err(_) => respond_early!(ApprovalCheckResult::Bad(ApprovalCheckError::InvalidSignature(
 			approval.validator
 		),)),
-		Ok(s) => s,
+		Ok(()) => {},
 	};
 
 	let candidate_entry = match db.load_candidate_entry(&approved_candidate_hash)? {
@@ -1770,23 +1905,7 @@ fn check_and_import_approval<T>(
 		"Importing approval vote",
 	);
 
-	let inform_disputes_action = if !candidate_entry.has_approved(approval.validator) {
-		// The approval voting system requires a separate approval for each assignment
-		// to the candidate. It's possible that there are semi-duplicate approvals,
-		// but we only need to inform the dispute coordinator about the first expressed
-		// opinion by the validator about the candidate.
-		Some(Action::InformDisputeCoordinator {
-			candidate_hash: approved_candidate_hash,
-			candidate_receipt: candidate_entry.candidate_receipt().clone(),
-			session: block_entry.session(),
-			dispute_statement: signed_dispute_statement,
-			validator_index: approval.validator,
-		})
-	} else {
-		None
-	};
-
-	let mut actions = advance_approval_state(
+	let actions = advance_approval_state(
 		state,
 		db,
 		&metrics,
@@ -1795,8 +1914,6 @@ fn check_and_import_approval<T>(
 		candidate_entry,
 		ApprovalStateTransition::RemoteApproval(approval.validator),
 	);
-
-	actions.extend(inform_disputes_action);
 
 	Ok((actions, t))
 }
@@ -2242,15 +2359,12 @@ async fn launch_approval<Context>(
 							"Data recovery invalid for candidate {:?}",
 							(candidate_hash, candidate.descriptor.para_id),
 						);
-
-						sender
-							.send_message(DisputeCoordinatorMessage::IssueLocalStatement(
-								session_index,
-								candidate_hash,
-								candidate.clone(),
-								false,
-							))
-							.await;
+						issue_local_invalid_statement(
+							&mut sender,
+							session_index,
+							candidate_hash,
+							candidate.clone(),
+						);
 						metrics_guard.take().on_approval_invalid();
 					},
 				}
@@ -2292,30 +2406,14 @@ async fn launch_approval<Context>(
 
 		match val_rx.await {
 			Err(_) => return ApprovalState::failed(validator_index, candidate_hash),
-			Ok(Ok(ValidationResult::Valid(commitments, _))) => {
+			Ok(Ok(ValidationResult::Valid(_, _))) => {
 				// Validation checked out. Issue an approval command. If the underlying service is unreachable,
 				// then there isn't anything we can do.
 
 				gum::trace!(target: LOG_TARGET, ?candidate_hash, ?para_id, "Candidate Valid");
 
-				let expected_commitments_hash = candidate.commitments_hash;
-				if commitments.hash() == expected_commitments_hash {
-					let _ = metrics_guard.take();
-					return ApprovalState::approved(validator_index, candidate_hash)
-				} else {
-					// Commitments mismatch - issue a dispute.
-					sender
-						.send_message(DisputeCoordinatorMessage::IssueLocalStatement(
-							session_index,
-							candidate_hash,
-							candidate.clone(),
-							false,
-						))
-						.await;
-
-					metrics_guard.take().on_approval_invalid();
-					return ApprovalState::failed(validator_index, candidate_hash)
-				}
+				let _ = metrics_guard.take();
+				return ApprovalState::approved(validator_index, candidate_hash)
 			},
 			Ok(Ok(ValidationResult::Invalid(reason))) => {
 				gum::warn!(
@@ -2326,14 +2424,12 @@ async fn launch_approval<Context>(
 					"Detected invalid candidate as an approval checker.",
 				);
 
-				sender
-					.send_message(DisputeCoordinatorMessage::IssueLocalStatement(
-						session_index,
-						candidate_hash,
-						candidate.clone(),
-						false,
-					))
-					.await;
+				issue_local_invalid_statement(
+					&mut sender,
+					session_index,
+					candidate_hash,
+					candidate.clone(),
+				);
 
 				metrics_guard.take().on_approval_invalid();
 				return ApprovalState::failed(validator_index, candidate_hash)
@@ -2408,7 +2504,7 @@ async fn issue_approval<Context>(
 	};
 
 	let candidate_hash = match block_entry.candidate(candidate_index as usize) {
-		Some((_, h)) => h.clone(),
+		Some((_, h)) => *h,
 		None => {
 			gum::warn!(
 				target: LOG_TARGET,
@@ -2437,7 +2533,7 @@ async fn issue_approval<Context>(
 		},
 	};
 
-	let validator_pubkey = match session_info.validators.get(validator_index.0 as usize) {
+	let validator_pubkey = match session_info.validators.get(validator_index) {
 		Some(p) => p,
 		None => {
 			gum::warn!(
@@ -2468,17 +2564,6 @@ async fn issue_approval<Context>(
 		},
 	};
 
-	// Record our statement in the dispute coordinator for later
-	// participation in disputes on the same candidate.
-	let signed_dispute_statement = SignedDisputeStatement::new_checked(
-		DisputeStatement::Valid(ValidDisputeStatementKind::ApprovalChecking),
-		candidate_hash,
-		session,
-		validator_pubkey.clone(),
-		sig.clone(),
-	)
-	.expect("Statement just signed; should pass checks; qed");
-
 	gum::trace!(
 		target: LOG_TARGET,
 		?candidate_hash,
@@ -2487,25 +2572,7 @@ async fn issue_approval<Context>(
 		"Issuing approval vote",
 	);
 
-	let candidate_receipt = candidate_entry.candidate_receipt().clone();
-
-	let inform_disputes_action = if candidate_entry.has_approved(validator_index) {
-		// The approval voting system requires a separate approval for each assignment
-		// to the candidate. It's possible that there are semi-duplicate approvals,
-		// but we only need to inform the dispute coordinator about the first expressed
-		// opinion by the validator about the candidate.
-		Some(Action::InformDisputeCoordinator {
-			candidate_hash,
-			candidate_receipt,
-			session,
-			dispute_statement: signed_dispute_statement,
-			validator_index,
-		})
-	} else {
-		None
-	};
-
-	let mut actions = advance_approval_state(
+	let actions = advance_approval_state(
 		state,
 		db,
 		metrics,
@@ -2527,9 +2594,6 @@ async fn issue_approval<Context>(
 		},
 	));
 
-	// dispatch to dispute coordinator.
-	actions.extend(inform_disputes_action);
-
 	Ok(actions)
 }
 
@@ -2545,4 +2609,30 @@ fn sign_approval(
 	let payload = ApprovalVote(candidate_hash).signing_payload(session_index);
 
 	Some(key.sign(&payload[..]))
+}
+
+/// Send `IssueLocalStatement` to dispute-coordinator.
+fn issue_local_invalid_statement<Sender>(
+	sender: &mut Sender,
+	session_index: SessionIndex,
+	candidate_hash: CandidateHash,
+	candidate: CandidateReceipt,
+) where
+	Sender: overseer::ApprovalVotingSenderTrait,
+{
+	// We need to send an unbounded message here to break a cycle:
+	// DisputeCoordinatorMessage::IssueLocalStatement ->
+	// ApprovalVotingMessage::GetApprovalSignaturesForCandidate.
+	//
+	// Use of unbounded _should_ be fine here as raising a dispute should be an
+	// exceptional event. Even in case of bugs: There can be no more than
+	// number of slots per block requests every block. Also for sending this
+	// message a full recovery and validation procedure took place, which takes
+	// longer than issuing a local statement + import.
+	sender.send_unbounded_message(DisputeCoordinatorMessage::IssueLocalStatement(
+		session_index,
+		candidate_hash,
+		candidate.clone(),
+		false,
+	));
 }

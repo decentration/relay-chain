@@ -20,9 +20,11 @@ use futures::executor::{self, block_on};
 use futures_timer::Delay;
 use parity_scale_codec::{Decode, Encode};
 use polkadot_node_network_protocol::{
+	grid_topology::{SessionGridTopology, TopologyPeerInfo},
+	peer_set::ValidationVersion,
 	request_response::{
 		v1::{StatementFetchingRequest, StatementFetchingResponse},
-		IncomingRequest, Recipient, Requests,
+		IncomingRequest, Recipient, ReqProtocolNames, Requests,
 	},
 	view, ObservedRole,
 };
@@ -33,7 +35,9 @@ use polkadot_node_subsystem::{
 	ActivatedLeaf, LeafStatus,
 };
 use polkadot_node_subsystem_test_helpers::mock::make_ferdie_keystore;
-use polkadot_primitives::v2::{Hash, Id as ParaId, SessionInfo, ValidationCode};
+use polkadot_primitives::{
+	GroupIndex, Hash, Id as ParaId, IndexedVec, SessionInfo, ValidationCode, ValidatorId,
+};
 use polkadot_primitives_test_helpers::{
 	dummy_committed_candidate_receipt, dummy_hash, AlwaysZeroRng,
 };
@@ -43,6 +47,9 @@ use sp_authority_discovery::AuthorityPair;
 use sp_keyring::Sr25519Keyring;
 use sp_keystore::{CryptoStore, SyncCryptoStore, SyncCryptoStorePtr};
 use std::{iter::FromIterator as _, sync::Arc, time::Duration};
+
+// Some deterministic genesis hash for protocol names
+const GENESIS_HASH: Hash = Hash::repeat_byte(0xff);
 
 #[test]
 fn active_head_accepts_only_2_seconded_per_validator() {
@@ -78,7 +85,7 @@ fn active_head_accepts_only_2_seconded_per_validator() {
 	};
 
 	let mut head_data = ActiveHeadData::new(
-		validators,
+		IndexedVec::<ValidatorIndex, ValidatorId>::from(validators),
 		session_index,
 		PerLeafSpan::new(Arc::new(jaeger::Span::Disabled), "test"),
 	);
@@ -424,7 +431,7 @@ fn peer_view_update_sends_messages() {
 
 	let new_head_data = {
 		let mut data = ActiveHeadData::new(
-			validators,
+			IndexedVec::<ValidatorIndex, ValidatorId>::from(validators),
 			session_index,
 			PerLeafSpan::new(Arc::new(jaeger::Span::Disabled), "test"),
 		);
@@ -505,7 +512,7 @@ fn peer_view_update_sends_messages() {
 	let peer = PeerId::random();
 
 	executor::block_on(async move {
-		let mut topology: SessionGridTopology = Default::default();
+		let mut topology = GridNeighbors::empty();
 		topology.peers_x = HashSet::from_iter(vec![peer.clone()].into_iter());
 		update_peer_view_and_maybe_send_unlocked(
 			peer.clone(),
@@ -635,7 +642,7 @@ fn circulated_statement_goes_to_all_peers_with_view() {
 		};
 		let statement = StoredStatement { comparator: &comparator, statement: &statement };
 
-		let mut topology: SessionGridTopology = Default::default();
+		let mut topology = GridNeighbors::empty();
 		topology.peers_x =
 			HashSet::from_iter(vec![peer_a.clone(), peer_b.clone(), peer_c.clone()].into_iter());
 		let needs_dependents = circulate_statement(
@@ -724,7 +731,8 @@ fn receiving_from_one_sends_to_another_and_to_candidate_backing() {
 	let pool = sp_core::testing::TaskExecutor::new();
 	let (ctx, mut handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context(pool);
 
-	let (statement_req_receiver, _) = IncomingRequest::get_config_receiver();
+	let req_protocol_names = ReqProtocolNames::new(&GENESIS_HASH, None);
+	let (statement_req_receiver, _) = IncomingRequest::get_config_receiver(&req_protocol_names);
 
 	let bg = async move {
 		let s = StatementDistributionSubsystem::new(
@@ -775,7 +783,12 @@ fn receiving_from_one_sends_to_another_and_to_candidate_backing() {
 		handle
 			.send(FromOrchestra::Communication {
 				msg: StatementDistributionMessage::NetworkBridgeUpdate(
-					NetworkBridgeEvent::PeerConnected(peer_a.clone(), ObservedRole::Full, 1, None),
+					NetworkBridgeEvent::PeerConnected(
+						peer_a.clone(),
+						ObservedRole::Full,
+						ValidationVersion::V1.into(),
+						None,
+					),
 				),
 			})
 			.await;
@@ -783,7 +796,12 @@ fn receiving_from_one_sends_to_another_and_to_candidate_backing() {
 		handle
 			.send(FromOrchestra::Communication {
 				msg: StatementDistributionMessage::NetworkBridgeUpdate(
-					NetworkBridgeEvent::PeerConnected(peer_b.clone(), ObservedRole::Full, 1, None),
+					NetworkBridgeEvent::PeerConnected(
+						peer_b.clone(),
+						ObservedRole::Full,
+						ValidationVersion::V1.into(),
+						None,
+					),
 				),
 			})
 			.await;
@@ -917,7 +935,9 @@ fn receiving_large_statement_from_one_sends_to_another_and_to_candidate_backing(
 	let pool = sp_core::testing::TaskExecutor::new();
 	let (ctx, mut handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context(pool);
 
-	let (statement_req_receiver, mut req_cfg) = IncomingRequest::get_config_receiver();
+	let req_protocol_names = ReqProtocolNames::new(&GENESIS_HASH, None);
+	let (statement_req_receiver, mut req_cfg) =
+		IncomingRequest::get_config_receiver(&req_protocol_names);
 
 	let bg = async move {
 		let s = StatementDistributionSubsystem::new(
@@ -971,7 +991,7 @@ fn receiving_large_statement_from_one_sends_to_another_and_to_candidate_backing(
 					NetworkBridgeEvent::PeerConnected(
 						peer_a.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Alice.public().into()])),
 					),
 				),
@@ -984,7 +1004,7 @@ fn receiving_large_statement_from_one_sends_to_another_and_to_candidate_backing(
 					NetworkBridgeEvent::PeerConnected(
 						peer_b.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Bob.public().into()])),
 					),
 				),
@@ -996,7 +1016,7 @@ fn receiving_large_statement_from_one_sends_to_another_and_to_candidate_backing(
 					NetworkBridgeEvent::PeerConnected(
 						peer_c.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Charlie.public().into()])),
 					),
 				),
@@ -1008,7 +1028,7 @@ fn receiving_large_statement_from_one_sends_to_another_and_to_candidate_backing(
 					NetworkBridgeEvent::PeerConnected(
 						peer_bad.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						None,
 					),
 				),
@@ -1429,7 +1449,9 @@ fn share_prioritizes_backing_group() {
 	let pool = sp_core::testing::TaskExecutor::new();
 	let (ctx, mut handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context(pool);
 
-	let (statement_req_receiver, mut req_cfg) = IncomingRequest::get_config_receiver();
+	let req_protocol_names = ReqProtocolNames::new(&GENESIS_HASH, None);
+	let (statement_req_receiver, mut req_cfg) =
+		IncomingRequest::get_config_receiver(&req_protocol_names);
 
 	let bg = async move {
 		let s = StatementDistributionSubsystem::new(
@@ -1484,7 +1506,7 @@ fn share_prioritizes_backing_group() {
 						NetworkBridgeEvent::PeerConnected(
 							peer,
 							ObservedRole::Full,
-							1,
+							ValidationVersion::V1.into(),
 							Some(HashSet::from([pair.public().into()])),
 						),
 					),
@@ -1507,7 +1529,7 @@ fn share_prioritizes_backing_group() {
 					NetworkBridgeEvent::PeerConnected(
 						peer_a.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Alice.public().into()])),
 					),
 				),
@@ -1519,7 +1541,7 @@ fn share_prioritizes_backing_group() {
 					NetworkBridgeEvent::PeerConnected(
 						peer_b.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Bob.public().into()])),
 					),
 				),
@@ -1531,7 +1553,7 @@ fn share_prioritizes_backing_group() {
 					NetworkBridgeEvent::PeerConnected(
 						peer_c.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Charlie.public().into()])),
 					),
 				),
@@ -1543,7 +1565,7 @@ fn share_prioritizes_backing_group() {
 					NetworkBridgeEvent::PeerConnected(
 						peer_bad.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						None,
 					),
 				),
@@ -1555,7 +1577,7 @@ fn share_prioritizes_backing_group() {
 					NetworkBridgeEvent::PeerConnected(
 						peer_other_group.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Dave.public().into()])),
 					),
 				),
@@ -1724,7 +1746,8 @@ fn peer_cant_flood_with_large_statements() {
 	let pool = sp_core::testing::TaskExecutor::new();
 	let (ctx, mut handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context(pool);
 
-	let (statement_req_receiver, _) = IncomingRequest::get_config_receiver();
+	let req_protocol_names = ReqProtocolNames::new(&GENESIS_HASH, None);
+	let (statement_req_receiver, _) = IncomingRequest::get_config_receiver(&req_protocol_names);
 	let bg = async move {
 		let s = StatementDistributionSubsystem::new(
 			make_ferdie_keystore(),
@@ -1777,7 +1800,7 @@ fn peer_cant_flood_with_large_statements() {
 					NetworkBridgeEvent::PeerConnected(
 						peer_a.clone(),
 						ObservedRole::Full,
-						1,
+						ValidationVersion::V1.into(),
 						Some(HashSet::from([Sr25519Keyring::Alice.public().into()])),
 					),
 				),
@@ -1928,7 +1951,8 @@ fn handle_multiple_seconded_statements() {
 	let pool = sp_core::testing::TaskExecutor::new();
 	let (ctx, mut handle) = polkadot_node_subsystem_test_helpers::make_subsystem_context(pool);
 
-	let (statement_req_receiver, _) = IncomingRequest::get_config_receiver();
+	let req_protocol_names = ReqProtocolNames::new(&GENESIS_HASH, None);
+	let (statement_req_receiver, _) = IncomingRequest::get_config_receiver(&req_protocol_names);
 
 	let virtual_overseer_fut = async move {
 		let s = StatementDistributionSubsystem::new(
@@ -1983,7 +2007,7 @@ fn handle_multiple_seconded_statements() {
 						NetworkBridgeEvent::PeerConnected(
 							peer.clone(),
 							ObservedRole::Full,
-							1,
+							ValidationVersion::V1.into(),
 							None,
 						),
 					),
@@ -1998,42 +2022,77 @@ fn handle_multiple_seconded_statements() {
 				.await;
 		}
 
-		// Explicitly add all `lucky` peers to the gossip peers to ensure that neither `peerA` not `peerB`
-		// receive statements
+		// Set up a topology which puts peers a & b in a column together.
 		let gossip_topology = {
-			let mut t = network_bridge_event::NewGossipTopology {
-				session: 1,
-				our_neighbors_x: HashMap::new(),
-				our_neighbors_y: HashMap::new(),
-			};
+			// create a lucky_peers+1 * lucky_peers+1 grid topology where we are at index 2, sharing
+			// a row with peer_a (0) and peer_b (1) and a column with all the lucky peers.
+			// the rest is filled with junk.
+			// This is an absolute garbage hack depending on quirks of the implementation
+			// and not on sound architecture.
 
-			// Create a topology to ensure that we send messages not to `peer_a`/`peer_b`
-			for (i, peer) in lucky_peers.iter().enumerate() {
-				let authority_id = AuthorityPair::generate().0.public();
-				t.our_neighbors_y.insert(
-					authority_id,
-					network_bridge_event::TopologyPeerInfo {
-						peer_ids: vec![peer.clone()],
-						validator_index: (i as u32 + 2_u32).into(),
-					},
-				);
+			let n_lucky = lucky_peers.len();
+			let dim = n_lucky + 1;
+			let grid_size = dim * dim;
+			let topology_peer_info: Vec<_> = (0..grid_size)
+				.map(|i| {
+					if i == 0 {
+						TopologyPeerInfo {
+							peer_ids: vec![peer_a.clone()],
+							validator_index: ValidatorIndex(0),
+							discovery_id: AuthorityPair::generate().0.public(),
+						}
+					} else if i == 1 {
+						TopologyPeerInfo {
+							peer_ids: vec![peer_b.clone()],
+							validator_index: ValidatorIndex(1),
+							discovery_id: AuthorityPair::generate().0.public(),
+						}
+					} else if i == 2 {
+						TopologyPeerInfo {
+							peer_ids: vec![],
+							validator_index: ValidatorIndex(2),
+							discovery_id: AuthorityPair::generate().0.public(),
+						}
+					} else if (i - 2) % dim == 0 {
+						let lucky_index = ((i - 2) / dim) - 1;
+						TopologyPeerInfo {
+							peer_ids: vec![lucky_peers[lucky_index].clone()],
+							validator_index: ValidatorIndex(i as _),
+							discovery_id: AuthorityPair::generate().0.public(),
+						}
+					} else {
+						TopologyPeerInfo {
+							peer_ids: vec![PeerId::random()],
+							validator_index: ValidatorIndex(i as _),
+							discovery_id: AuthorityPair::generate().0.public(),
+						}
+					}
+				})
+				.collect();
+
+			// also a hack: this is only required to be accurate for
+			// the validator indices we compute grid neighbors for.
+			let mut shuffled_indices = vec![0; grid_size];
+			shuffled_indices[2] = 2;
+
+			// Some sanity checking to make sure this hack is set up correctly.
+			let topology = SessionGridTopology::new(shuffled_indices, topology_peer_info);
+			let grid_neighbors = topology.compute_grid_neighbors_for(ValidatorIndex(2)).unwrap();
+			assert_eq!(grid_neighbors.peers_x.len(), 25);
+			assert!(grid_neighbors.peers_x.contains(&peer_a));
+			assert!(grid_neighbors.peers_x.contains(&peer_b));
+			assert!(!grid_neighbors.peers_y.contains(&peer_b));
+			assert!(!grid_neighbors.route_to_peer(RequiredRouting::GridY, &peer_b));
+			assert_eq!(grid_neighbors.peers_y.len(), lucky_peers.len());
+			for lucky in &lucky_peers {
+				assert!(grid_neighbors.peers_y.contains(lucky));
 			}
-			t.our_neighbors_x.insert(
-				AuthorityPair::generate().0.public(),
-				network_bridge_event::TopologyPeerInfo {
-					peer_ids: vec![peer_a.clone()],
-					validator_index: 0_u32.into(),
-				},
-			);
-			t.our_neighbors_x.insert(
-				AuthorityPair::generate().0.public(),
-				network_bridge_event::TopologyPeerInfo {
-					peer_ids: vec![peer_b.clone()],
-					validator_index: 1_u32.into(),
-				},
-			);
 
-			t
+			network_bridge_event::NewGossipTopology {
+				session: 1,
+				topology,
+				local_index: Some(ValidatorIndex(2)),
+			}
 		};
 
 		handle
@@ -2262,7 +2321,7 @@ fn handle_multiple_seconded_statements() {
 }
 
 fn make_session_info(validators: Vec<Pair>, groups: Vec<Vec<u32>>) -> SessionInfo {
-	let validator_groups: Vec<Vec<ValidatorIndex>> = groups
+	let validator_groups: IndexedVec<GroupIndex, Vec<ValidatorIndex>> = groups
 		.iter()
 		.map(|g| g.into_iter().map(|v| ValidatorIndex(*v)).collect())
 		.collect();

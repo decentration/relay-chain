@@ -18,7 +18,7 @@ use super::*;
 use crate::configuration::HostConfiguration;
 use frame_benchmarking::benchmarks;
 use frame_system::RawOrigin;
-use primitives::v2::{HeadData, Id as ParaId, ValidationCode, MAX_CODE_SIZE, MAX_HEAD_DATA_SIZE};
+use primitives::{HeadData, Id as ParaId, ValidationCode, MAX_CODE_SIZE, MAX_HEAD_DATA_SIZE};
 use sp_runtime::traits::{One, Saturating};
 
 mod pvf_check;
@@ -31,9 +31,9 @@ use self::pvf_check::{VoteCause, VoteOutcome};
 // shouldn't exceed this number.
 const SAMPLE_SIZE: u32 = 1024;
 
-fn assert_last_event<T: Config>(generic_event: <T as Config>::Event) {
+fn assert_last_event<T: Config>(generic_event: <T as Config>::RuntimeEvent) {
 	let events = frame_system::Pallet::<T>::events();
-	let system_event: <T as frame_system::Config>::Event = generic_event.into();
+	let system_event: <T as frame_system::Config>::RuntimeEvent = generic_event.into();
 	// compare to the last event record
 	let frame_system::EventRecord { event, .. } = &events[events.len() - 1];
 	assert_eq!(event, &system_event);

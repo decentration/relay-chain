@@ -18,7 +18,7 @@
 
 use futures::{channel::oneshot, prelude::*};
 use polkadot_node_subsystem::{messages::ChainApiMessage, SubsystemSender};
-use polkadot_primitives::v2::{BlockNumber, Hash, Header};
+use polkadot_primitives::{BlockNumber, Hash, Header};
 
 /// Given a new chain-head hash, this determines the hashes of all new blocks we should track
 /// metadata for, given this head.
@@ -124,7 +124,7 @@ where
 						Ok(Ok(h)) => h,
 					}
 				})
-				.for_each(|x| requests.push(x));
+				.for_each(|x| requests.push_back(x));
 
 			let batch_headers: Vec<_> =
 				requests.flat_map(|x: Option<Header>| stream::iter(x)).collect().await;

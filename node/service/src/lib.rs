@@ -34,7 +34,6 @@ mod tests;
 
 #[cfg(feature = "full-node")]
 use {
-	beefy_gadget::notification::{BeefyBestBlockSender, BeefySignedCommitmentSender},
 	grandpa::{self, FinalityProofProvider as GrandpaFinalityProofProvider},
 	gum::info,
 	polkadot_node_core_approval_voting::{
@@ -47,8 +46,11 @@ use {
 		self as chain_selection_subsystem, Config as ChainSelectionConfig,
 	},
 	polkadot_node_core_dispute_coordinator::Config as DisputeCoordinatorConfig,
+	polkadot_node_network_protocol::{
+		peer_set::PeerSetProtocolNames, request_response::ReqProtocolNames,
+	},
 	polkadot_overseer::BlockInfo,
-	sc_client_api::{BlockBackend, ExecutorProvider},
+	sc_client_api::BlockBackend,
 	sp_core::traits::SpawnNamed,
 	sp_trie::PrefixedMemoryDB,
 };
@@ -93,12 +95,14 @@ pub use polkadot_client::PolkadotExecutorDispatch;
 
 pub use chain_spec::{KusamaChainSpec, PolkadotChainSpec, RococoChainSpec, WestendChainSpec};
 pub use consensus_common::{block_validation::Chain, Proposal, SelectChain};
+use frame_benchmarking_cli::SUBSTRATE_REFERENCE_HARDWARE;
+use mmr_gadget::MmrGadget;
 #[cfg(feature = "full-node")]
 pub use polkadot_client::{
 	AbstractClient, Client, ClientHandle, ExecuteWithClient, FullBackend, FullClient,
 	RuntimeApiCollection,
 };
-pub use polkadot_primitives::v2::{Block, BlockId, BlockNumber, CollatorPair, Hash, Id as ParaId};
+pub use polkadot_primitives::{Block, BlockId, BlockNumber, CollatorPair, Hash, Id as ParaId};
 pub use sc_client_api::{Backend, CallExecutor, ExecutionStrategy};
 pub use sc_consensus::{BlockImport, LongestChain};
 use sc_executor::NativeElseWasmExecutor;
@@ -158,10 +162,7 @@ where
 		&self,
 		hash: Block::Hash,
 	) -> sp_blockchain::Result<Option<<Block as BlockT>::Header>> {
-		<Self as sp_blockchain::HeaderBackend<Block>>::header(
-			self,
-			generic::BlockId::<Block>::Hash(hash),
-		)
+		<Self as sp_blockchain::HeaderBackend<Block>>::header(self, hash)
 	}
 	fn number(
 		&self,
@@ -290,7 +291,7 @@ impl IdentifyVariant for Box<dyn ChainSpec> {
 }
 
 #[cfg(feature = "full-node")]
-fn open_database(db_source: &DatabaseSource) -> Result<Arc<dyn Database>, Error> {
+pub fn open_database(db_source: &DatabaseSource) -> Result<Arc<dyn Database>, Error> {
 	let parachains_db = match db_source {
 		DatabaseSource::RocksDb { path, .. } => parachains_db::open_creating_rocksdb(
 			path.clone(),
@@ -347,6 +348,14 @@ type FullGrandpaBlockImport<RuntimeApi, ExecutorDispatch, ChainSelection = FullS
 		Block,
 		FullClient<RuntimeApi, ExecutorDispatch>,
 		ChainSelection,
+	>;
+#[cfg(feature = "full-node")]
+type FullBeefyBlockImport<RuntimeApi, ExecutorDispatch, InnerBlockImport> =
+	beefy_gadget::import::BeefyBlockImport<
+		Block,
+		FullBackend,
+		FullClient<RuntimeApi, ExecutorDispatch>,
+		InnerBlockImport,
 	>;
 
 #[cfg(feature = "full-node")]
@@ -454,11 +463,15 @@ fn new_partial<RuntimeApi, ExecutorDispatch, ChainSelection>(
 				babe::BabeBlockImport<
 					Block,
 					FullClient<RuntimeApi, ExecutorDispatch>,
-					FullGrandpaBlockImport<RuntimeApi, ExecutorDispatch, ChainSelection>,
+					FullBeefyBlockImport<
+						RuntimeApi,
+						ExecutorDispatch,
+						FullGrandpaBlockImport<RuntimeApi, ExecutorDispatch, ChainSelection>,
+					>,
 				>,
 				grandpa::LinkHalf<Block, FullClient<RuntimeApi, ExecutorDispatch>, ChainSelection>,
 				babe::BabeLink<Block>,
-				(BeefySignedCommitmentSender<Block>, BeefyBestBlockSender<Block>),
+				beefy_gadget::BeefyVoterLinks<Block>,
 			),
 			grandpa::SharedVoterState,
 			sp_consensus_babe::SlotDuration,
@@ -498,12 +511,18 @@ where
 		grandpa_hard_forks,
 		telemetry.as_ref().map(|x| x.handle()),
 	)?;
-
 	let justification_import = grandpa_block_import.clone();
 
-	let babe_config = babe::Config::get(&*client)?;
+	let (beefy_block_import, beefy_voter_links, beefy_rpc_links) =
+		beefy_gadget::beefy_block_import_and_links(
+			grandpa_block_import,
+			backend.clone(),
+			client.clone(),
+		);
+
+	let babe_config = babe::configuration(&*client)?;
 	let (block_import, babe_link) =
-		babe::block_import(babe_config.clone(), grandpa_block_import, client.clone())?;
+		babe::block_import(babe_config.clone(), beefy_block_import, client.clone())?;
 
 	let slot_duration = babe_link.config().slot_duration();
 	let import_queue = babe::import_queue(
@@ -521,19 +540,12 @@ where
 					slot_duration,
 				);
 
-			Ok((timestamp, slot))
+			Ok((slot, timestamp))
 		},
 		&task_manager.spawn_essential_handle(),
 		config.prometheus_registry(),
-		consensus_common::CanAuthorWithNativeVersion::new(client.executor().clone()),
 		telemetry.as_ref().map(|x| x.handle()),
 	)?;
-
-	let (beefy_commitment_link, beefy_commitment_stream) =
-		beefy_gadget::notification::BeefySignedCommitmentStream::<Block>::channel();
-	let (beefy_best_block_link, beefy_best_block_stream) =
-		beefy_gadget::notification::BeefyBestBlockStream::<Block>::channel();
-	let beefy_links = (beefy_commitment_link, beefy_best_block_link);
 
 	let justification_stream = grandpa_link.justification_stream();
 	let shared_authority_set = grandpa_link.shared_authority_set().clone();
@@ -546,7 +558,7 @@ where
 	let shared_epoch_changes = babe_link.epoch_changes().clone();
 	let slot_duration = babe_config.slot_duration();
 
-	let import_setup = (block_import, grandpa_link, babe_link, beefy_links);
+	let import_setup = (block_import, grandpa_link, babe_link, beefy_voter_links);
 	let rpc_setup = shared_voter_state.clone();
 
 	let rpc_extensions_builder = {
@@ -579,8 +591,8 @@ where
 					finality_provider: finality_proof_provider.clone(),
 				},
 				beefy: polkadot_rpc::BeefyDeps {
-					beefy_commitment_stream: beefy_commitment_stream.clone(),
-					beefy_best_block_stream: beefy_best_block_stream.clone(),
+					beefy_finality_proof_stream: beefy_rpc_links.from_voter_justif_stream.clone(),
+					beefy_best_block_stream: beefy_rpc_links.from_voter_best_beefy_stream.clone(),
 					subscription_executor,
 				},
 			};
@@ -687,7 +699,7 @@ where
 				return None
 			};
 
-			let parent_hash = client.header(&BlockId::Hash(hash)).ok()??.parent_hash;
+			let parent_hash = client.header(hash).ok()??.parent_hash;
 
 			Some(BlockInfo { hash, parent_hash, number })
 		})
@@ -704,6 +716,11 @@ where
 
 	Ok(leaves.into_iter().rev().take(MAX_ACTIVE_LEAVES).collect())
 }
+
+pub const AVAILABILITY_CONFIG: AvailabilityConfig = AvailabilityConfig {
+	col_data: parachains_db::REAL_COLUMNS.col_availability_data,
+	col_meta: parachains_db::REAL_COLUMNS.col_availability_meta,
+};
 
 /// Create a new full node of arbitrary runtime and executor.
 ///
@@ -740,6 +757,7 @@ where
 {
 	use polkadot_node_network_protocol::request_response::IncomingRequest;
 
+	let is_offchain_indexing_enabled = config.offchain_worker.indexing_enabled;
 	let role = config.role.clone();
 	let force_authoring = config.force_authoring;
 	let backoff_authoring_blocks = {
@@ -787,7 +805,7 @@ where
 	let auth_or_collator = role.is_authority() || is_collator.is_collator();
 	let requires_overseer_for_chain_sel = local_keystore.is_some() && auth_or_collator;
 
-	let pvf_checker_enabled = !is_collator.is_collator() && chain_spec.is_versi();
+	let pvf_checker_enabled = role.is_authority() && !is_collator.is_collator();
 
 	let select_chain = if requires_overseer_for_chain_sel {
 		let metrics =
@@ -820,46 +838,63 @@ where
 	let shared_voter_state = rpc_setup;
 	let auth_disc_publish_non_global_ips = config.network.allow_non_globals_in_dht;
 
+	let genesis_hash = client.block_hash(0).ok().flatten().expect("Genesis block exists; qed");
+
 	// Note: GrandPa is pushed before the Polkadot-specific protocols. This doesn't change
 	// anything in terms of behaviour, but makes the logs more consistent with the other
 	// Substrate nodes.
-	let grandpa_protocol_name = grandpa::protocol_standard_name(
-		&client.block_hash(0).ok().flatten().expect("Genesis block exists; qed"),
-		&config.chain_spec,
-	);
+	let grandpa_protocol_name = grandpa::protocol_standard_name(&genesis_hash, &config.chain_spec);
 	config
 		.network
 		.extra_sets
 		.push(grandpa::grandpa_peers_set_config(grandpa_protocol_name.clone()));
 
-	let beefy_protocol_name = beefy_gadget::protocol_standard_name(
-		&client.block_hash(0).ok().flatten().expect("Genesis block exists; qed"),
-		&config.chain_spec,
-	);
+	let beefy_gossip_proto_name =
+		beefy_gadget::gossip_protocol_name(&genesis_hash, config.chain_spec.fork_id());
+	// `beefy_on_demand_justifications_handler` is given to `beefy-gadget` task to be run,
+	// while `beefy_req_resp_cfg` is added to `config.network.request_response_protocols`.
+	let (beefy_on_demand_justifications_handler, beefy_req_resp_cfg) =
+		beefy_gadget::communication::request_response::BeefyJustifsRequestHandler::new(
+			&genesis_hash,
+			config.chain_spec.fork_id(),
+			client.clone(),
+		);
 	if enable_beefy {
 		config
 			.network
 			.extra_sets
-			.push(beefy_gadget::beefy_peers_set_config(beefy_protocol_name.clone()));
+			.push(beefy_gadget::communication::beefy_peers_set_config(
+				beefy_gossip_proto_name.clone(),
+			));
+		config.network.request_response_protocols.push(beefy_req_resp_cfg);
 	}
+
+	let peerset_protocol_names =
+		PeerSetProtocolNames::new(genesis_hash, config.chain_spec.fork_id());
 
 	{
 		use polkadot_network_bridge::{peer_sets_info, IsAuthority};
 		let is_authority = if role.is_authority() { IsAuthority::Yes } else { IsAuthority::No };
-		config.network.extra_sets.extend(peer_sets_info(is_authority));
+		config
+			.network
+			.extra_sets
+			.extend(peer_sets_info(is_authority, &peerset_protocol_names));
 	}
 
-	let (pov_req_receiver, cfg) = IncomingRequest::get_config_receiver();
+	let req_protocol_names = ReqProtocolNames::new(&genesis_hash, config.chain_spec.fork_id());
+
+	let (pov_req_receiver, cfg) = IncomingRequest::get_config_receiver(&req_protocol_names);
 	config.network.request_response_protocols.push(cfg);
-	let (chunk_req_receiver, cfg) = IncomingRequest::get_config_receiver();
+	let (chunk_req_receiver, cfg) = IncomingRequest::get_config_receiver(&req_protocol_names);
 	config.network.request_response_protocols.push(cfg);
-	let (collation_req_receiver, cfg) = IncomingRequest::get_config_receiver();
+	let (collation_req_receiver, cfg) = IncomingRequest::get_config_receiver(&req_protocol_names);
 	config.network.request_response_protocols.push(cfg);
-	let (available_data_req_receiver, cfg) = IncomingRequest::get_config_receiver();
+	let (available_data_req_receiver, cfg) =
+		IncomingRequest::get_config_receiver(&req_protocol_names);
 	config.network.request_response_protocols.push(cfg);
-	let (statement_req_receiver, cfg) = IncomingRequest::get_config_receiver();
+	let (statement_req_receiver, cfg) = IncomingRequest::get_config_receiver(&req_protocol_names);
 	config.network.request_response_protocols.push(cfg);
-	let (dispute_req_receiver, cfg) = IncomingRequest::get_config_receiver();
+	let (dispute_req_receiver, cfg) = IncomingRequest::get_config_receiver(&req_protocol_names);
 	config.network.request_response_protocols.push(cfg);
 
 	let grandpa_hard_forks = if config.chain_spec.is_kusama() {
@@ -874,7 +909,7 @@ where
 		grandpa_hard_forks,
 	));
 
-	let (network, system_rpc_tx, network_starter) =
+	let (network, system_rpc_tx, tx_handler_controller, network_starter) =
 		service::build_network(service::BuildNetworkParams {
 			config: &config,
 			client: client.clone(),
@@ -907,13 +942,9 @@ where
 
 	let parachains_db = open_database(&config.database)?;
 
-	let availability_config = AvailabilityConfig {
-		col_data: parachains_db::REAL_COLUMNS.col_availability_data,
-		col_meta: parachains_db::REAL_COLUMNS.col_availability_meta,
-	};
-
 	let approval_voting_config = ApprovalVotingConfig {
-		col_data: parachains_db::REAL_COLUMNS.col_approval_data,
+		col_approval_data: parachains_db::REAL_COLUMNS.col_approval_data,
+		col_session_data: parachains_db::REAL_COLUMNS.col_session_window_data,
 		slot_duration_millis: slot_duration.as_millis() as u64,
 	};
 
@@ -936,7 +967,8 @@ where
 	};
 
 	let dispute_coordinator_config = DisputeCoordinatorConfig {
-		col_data: parachains_db::REAL_COLUMNS.col_dispute_coordinator_data,
+		col_dispute_data: parachains_db::REAL_COLUMNS.col_dispute_coordinator_data,
+		col_session_data: parachains_db::REAL_COLUMNS.col_session_window_data,
 	};
 
 	let rpc_handlers = service::spawn_tasks(service::SpawnTasksParams {
@@ -949,11 +981,18 @@ where
 		transaction_pool: transaction_pool.clone(),
 		task_manager: &mut task_manager,
 		system_rpc_tx,
+		tx_handler_controller,
 		telemetry: telemetry.as_mut(),
 	})?;
 
 	if let Some(hwbench) = hwbench {
 		sc_sysinfo::print_hwbench(&hwbench);
+		if !SUBSTRATE_REFERENCE_HARDWARE.check_hardware(&hwbench) && role.is_authority() {
+			log::warn!(
+				"⚠️  The hardware does not meet the minimal requirements for role 'Authority' find out more at:\n\
+				https://wiki.polkadot.network/docs/maintain-guides-how-to-validate-polkadot#reference-hardware"
+			);
+		}
 
 		if let Some(ref mut telemetry) = telemetry {
 			let telemetry_handle = telemetry.handle();
@@ -977,6 +1016,7 @@ where
 	let authority_discovery_service = if auth_or_collator || overseer_enable_anyways {
 		use futures::StreamExt;
 		use sc_network::Event;
+		use sc_network_common::service::NetworkEventStream;
 
 		let authority_discovery_role = if role.is_authority() {
 			sc_authority_discovery::Role::PublishAndDiscover(keystore_container.keystore())
@@ -1043,12 +1083,14 @@ where
 					spawner,
 					is_collator,
 					approval_voting_config,
-					availability_config,
+					availability_config: AVAILABILITY_CONFIG,
 					candidate_validation_config,
 					chain_selection_config,
 					dispute_coordinator_config,
 					pvf_checker_enabled,
 					overseer_message_channel_capacity_override,
+					req_protocol_names,
+					peerset_protocol_names,
 				},
 			)
 			.map_err(|e| {
@@ -1074,8 +1116,8 @@ where
 					pin_mut!(forward);
 
 					select! {
-						_ = forward => (),
-						_ = overseer_fut => (),
+						() = forward => (),
+						() = overseer_fut => (),
 						complete => (),
 					}
 				}),
@@ -1091,9 +1133,6 @@ where
 	};
 
 	if role.is_authority() {
-		let can_author_with =
-			consensus_common::CanAuthorWithNativeVersion::new(client.executor().clone());
-
 		let proposer = sc_basic_authorship::ProposerFactory::new(
 			task_manager.spawn_handle(),
 			client.clone(),
@@ -1119,16 +1158,12 @@ where
 				let overseer_handle = overseer_handle.clone();
 
 				async move {
-					let parachain = polkadot_node_core_parachains_inherent::ParachainsInherentDataProvider::create(
-						&*client_clone,
-						overseer_handle,
-						parent,
-					).await.map_err(|e| Box::new(e))?;
-
-					let uncles = sc_consensus_uncles::create_uncles_inherent_data_provider(
-						&*client_clone,
-						parent,
-					)?;
+					let parachain =
+						polkadot_node_core_parachains_inherent::ParachainsInherentDataProvider::new(
+							client_clone,
+							overseer_handle,
+							parent,
+						);
 
 					let timestamp = sp_timestamp::InherentDataProvider::from_system_time();
 
@@ -1138,13 +1173,12 @@ where
 							slot_duration,
 						);
 
-					Ok((timestamp, slot, uncles, parachain))
+					Ok((slot, timestamp, parachain))
 				}
 			},
 			force_authoring,
 			backoff_authoring_blocks,
 			babe_link,
-			can_author_with,
 			block_proposal_slot_portion: babe::SlotProportion::new(2f32 / 3f32),
 			max_block_proposal_slot_portion: None,
 			telemetry: telemetry.as_ref().map(|x| x.handle()),
@@ -1160,20 +1194,28 @@ where
 		if role.is_authority() { Some(keystore_container.sync_keystore()) } else { None };
 
 	if enable_beefy {
+		let justifications_protocol_name = beefy_on_demand_justifications_handler.protocol_name();
+		let network_params = beefy_gadget::BeefyNetworkParams {
+			network: network.clone(),
+			gossip_protocol_name: beefy_gossip_proto_name,
+			justifications_protocol_name,
+			_phantom: core::marker::PhantomData::<Block>,
+		};
+		let payload_provider = beefy_primitives::mmr::MmrRootProvider::new(client.clone());
 		let beefy_params = beefy_gadget::BeefyParams {
 			client: client.clone(),
 			backend: backend.clone(),
+			payload_provider,
 			runtime: client.clone(),
 			key_store: keystore_opt.clone(),
-			network: network.clone(),
-			signed_commitment_sender: beefy_links.0,
-			beefy_best_block_sender: beefy_links.1,
+			network_params,
 			min_block_delta: if chain_spec.is_wococo() { 4 } else { 8 },
 			prometheus_registry: prometheus_registry.clone(),
-			protocol_name: beefy_protocol_name,
+			links: beefy_links,
+			on_demand_justifications_handler: beefy_on_demand_justifications_handler,
 		};
 
-		let gadget = beefy_gadget::start_beefy_gadget::<_, _, _, _, _>(beefy_params);
+		let gadget = beefy_gadget::start_beefy_gadget::<_, _, _, _, _, _>(beefy_params);
 
 		// Wococo's purpose is to be a testbed for BEEFY, so if it fails we'll
 		// bring the node down with it to make sure it is noticed.
@@ -1184,24 +1226,25 @@ where
 		} else {
 			task_manager.spawn_handle().spawn_blocking("beefy-gadget", None, gadget);
 		}
-	}
 
-	// Reduce grandpa load on Kusama and test networks. This will slow down finality by
-	// approximately one slot duration, but will reduce load. We would like to see the impact on
-	// Kusama, see: https://github.com/paritytech/polkadot/issues/5464
-	let gossip_duration = if chain_spec.is_versi() ||
-		chain_spec.is_wococo() ||
-		chain_spec.is_rococo() ||
-		chain_spec.is_kusama()
-	{
-		Duration::from_millis(2000)
-	} else {
-		Duration::from_millis(1000)
-	};
+		if is_offchain_indexing_enabled {
+			task_manager.spawn_handle().spawn_blocking(
+				"mmr-gadget",
+				None,
+				MmrGadget::start(
+					client.clone(),
+					backend.clone(),
+					sp_mmr_primitives::INDEXING_PREFIX.to_vec(),
+				),
+			);
+		}
+	}
 
 	let config = grandpa::Config {
 		// FIXME substrate#1578 make this available through chainspec
-		gossip_duration,
+		// Grandpa performance can be improved a bit by tuning this parameter, see:
+		// https://github.com/paritytech/polkadot/issues/5464
+		gossip_duration: Duration::from_millis(1000),
 		justification_period: 512,
 		name: Some(name),
 		observer_enabled: false,
@@ -1504,7 +1547,8 @@ fn revert_chain_selection(db: Arc<dyn Database>, hash: Hash) -> sp_blockchain::R
 
 fn revert_approval_voting(db: Arc<dyn Database>, hash: Hash) -> sp_blockchain::Result<()> {
 	let config = approval_voting_subsystem::Config {
-		col_data: parachains_db::REAL_COLUMNS.col_approval_data,
+		col_approval_data: parachains_db::REAL_COLUMNS.col_approval_data,
+		col_session_data: parachains_db::REAL_COLUMNS.col_session_window_data,
 		slot_duration_millis: Default::default(),
 	};
 

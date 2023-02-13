@@ -25,9 +25,9 @@ use futures::future::Future;
 use polkadot_node_primitives::{CollationGenerationConfig, CollatorFn};
 use polkadot_node_subsystem::messages::{CollationGenerationMessage, CollatorProtocolMessage};
 use polkadot_overseer::Handle;
-use polkadot_primitives::v2::{Balance, CollatorPair, HeadData, Id as ParaId, ValidationCode};
+use polkadot_primitives::{Balance, CollatorPair, HeadData, Id as ParaId, ValidationCode};
 use polkadot_runtime_common::BlockHashCount;
-use polkadot_runtime_parachains::paras::ParaGenesisArgs;
+use polkadot_runtime_parachains::paras::{ParaGenesisArgs, ParaKind};
 use polkadot_service::{
 	ClientHandle, Error, ExecuteWithClient, FullClient, IsCollator, NewFull, PrometheusConfig,
 };
@@ -37,16 +37,14 @@ use polkadot_test_runtime::{
 };
 use sc_chain_spec::ChainSpec;
 use sc_client_api::execution_extensions::ExecutionStrategies;
-use sc_network::{
-	config::{NetworkConfiguration, TransportConfig},
-	multiaddr,
-};
+use sc_network::{config::NetworkConfiguration, multiaddr};
+use sc_network_common::{config::TransportConfig, service::NetworkStateInfo};
 use sc_service::{
 	config::{
 		DatabaseSource, KeystoreConfig, MultiaddrWithPeerId, WasmExecutionMethod,
 		WasmtimeInstantiationStrategy,
 	},
-	BasePath, Configuration, KeepBlocks, Role, RpcHandlers, TaskManager,
+	BasePath, BlocksPruning, Configuration, Role, RpcHandlers, TaskManager,
 };
 use sp_arithmetic::traits::SaturatedConversion;
 use sp_blockchain::HeaderBackend;
@@ -138,7 +136,7 @@ pub fn node_config(
 	is_validator: bool,
 ) -> Configuration {
 	let base_path = BasePath::new_temp_dir().expect("could not create temporary directory");
-	let root = base_path.path();
+	let root = base_path.path().join(key.to_string());
 	let role = if is_validator { Role::Authority } else { Role::Full };
 	let key_seed = key.to_seed();
 	let mut spec = polkadot_local_testnet_config();
@@ -175,10 +173,9 @@ pub fn node_config(
 		keystore: KeystoreConfig::InMemory,
 		keystore_remote: Default::default(),
 		database: DatabaseSource::RocksDb { path: root.join("db"), cache_size: 128 },
-		state_cache_size: 16777216,
-		state_cache_child_ratio: None,
+		trie_cache_maximum_size: Some(64 * 1024 * 1024),
 		state_pruning: Default::default(),
-		keep_blocks: KeepBlocks::All,
+		blocks_pruning: BlocksPruning::KeepFinalized,
 		chain_spec: Box::new(spec),
 		wasm_method: WasmExecutionMethod::Compiled {
 			instantiation_strategy: WasmtimeInstantiationStrategy::PoolingCopyOnWrite,
@@ -288,7 +285,7 @@ impl PolkadotTestNode {
 	/// Send an extrinsic to this node.
 	pub async fn send_extrinsic(
 		&self,
-		function: impl Into<polkadot_test_runtime::Call>,
+		function: impl Into<polkadot_test_runtime::RuntimeCall>,
 		caller: Sr25519Keyring,
 	) -> Result<RpcTransactionOutput, RpcTransactionError> {
 		let extrinsic = construct_extrinsic(&*self.client, function, caller, 0);
@@ -308,7 +305,7 @@ impl PolkadotTestNode {
 			genesis: ParaGenesisArgs {
 				genesis_head: genesis_head.into(),
 				validation_code: validation_code.into(),
-				parachain: true,
+				para_kind: ParaKind::Parachain,
 			},
 		};
 
@@ -345,7 +342,7 @@ impl PolkadotTestNode {
 /// Construct an extrinsic that can be applied to the test runtime.
 pub fn construct_extrinsic(
 	client: &Client,
-	function: impl Into<polkadot_test_runtime::Call>,
+	function: impl Into<polkadot_test_runtime::RuntimeCall>,
 	caller: Sr25519Keyring,
 	nonce: u32,
 ) -> UncheckedExtrinsic {
@@ -384,7 +381,7 @@ pub fn construct_extrinsic(
 	UncheckedExtrinsic::new_signed(
 		function.clone(),
 		polkadot_test_runtime::Address::Id(caller.public().into()),
-		polkadot_primitives::v2::Signature::Sr25519(signature.clone()),
+		polkadot_primitives::Signature::Sr25519(signature.clone()),
 		extra.clone(),
 	)
 }
@@ -396,7 +393,7 @@ pub fn construct_transfer_extrinsic(
 	dest: sp_keyring::AccountKeyring,
 	value: Balance,
 ) -> UncheckedExtrinsic {
-	let function = polkadot_test_runtime::Call::Balances(pallet_balances::Call::transfer {
+	let function = polkadot_test_runtime::RuntimeCall::Balances(pallet_balances::Call::transfer {
 		dest: MultiSigner::from(dest.public()).into_account().into(),
 		value,
 	});

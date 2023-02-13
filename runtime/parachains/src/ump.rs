@@ -20,7 +20,7 @@ use crate::{
 };
 use frame_support::{pallet_prelude::*, traits::EnsureOrigin};
 use frame_system::pallet_prelude::*;
-use primitives::v2::{Id as ParaId, UpwardMessage};
+use primitives::{Id as ParaId, UpwardMessage};
 use sp_std::{collections::btree_map::BTreeMap, fmt, marker::PhantomData, mem, prelude::*};
 use xcm::latest::Outcome;
 
@@ -31,9 +31,12 @@ pub use pallet::*;
 /// This is used for benchmarking sanely bounding relevant storate items. It is expected from the `configurations`
 /// pallet to check these values before setting.
 pub const MAX_UPWARD_MESSAGE_SIZE_BOUND: u32 = 50 * 1024;
+/// Maximum amount of overweight messages that can exist in the queue at any given time.
+pub const MAX_OVERWEIGHT_MESSAGES: u32 = 1000;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
+pub mod migration;
 
 #[cfg(test)]
 pub(crate) mod tests;
@@ -73,7 +76,7 @@ impl UmpSink for () {
 		_: &[u8],
 		_: Weight,
 	) -> Result<Weight, (MessageId, Weight)> {
-		Ok(0)
+		Ok(Weight::zero())
 	}
 }
 
@@ -93,7 +96,9 @@ fn upward_message_id(data: &[u8]) -> MessageId {
 	sp_io::hashing::blake2_256(data)
 }
 
-impl<XcmExecutor: xcm::latest::ExecuteXcm<C::Call>, C: Config> UmpSink for XcmSink<XcmExecutor, C> {
+impl<XcmExecutor: xcm::latest::ExecuteXcm<C::RuntimeCall>, C: Config> UmpSink
+	for XcmSink<XcmExecutor, C>
+{
 	fn process_upward_message(
 		origin: ParaId,
 		mut data: &[u8],
@@ -105,14 +110,14 @@ impl<XcmExecutor: xcm::latest::ExecuteXcm<C::Call>, C: Config> UmpSink for XcmSi
 			VersionedXcm,
 		};
 
-		let id = upward_message_id(&data[..]);
-		let maybe_msg_and_weight = VersionedXcm::<C::Call>::decode_all_with_depth_limit(
+		let id = upward_message_id(data);
+		let maybe_msg_and_weight = VersionedXcm::<C::RuntimeCall>::decode_all_with_depth_limit(
 			xcm::MAX_XCM_DECODE_DEPTH,
 			&mut data,
 		)
 		.map(|xcm| {
 			(
-				Xcm::<C::Call>::try_from(xcm),
+				Xcm::<C::RuntimeCall>::try_from(xcm),
 				// NOTE: We are overestimating slightly here.
 				// The benchmark is timing this whole function with different message sizes and a NOOP extrinsic to
 				// measure the size-dependent weight. But as we use the weight funtion **in** the benchmarked funtion we
@@ -123,7 +128,7 @@ impl<XcmExecutor: xcm::latest::ExecuteXcm<C::Call>, C: Config> UmpSink for XcmSi
 		match maybe_msg_and_weight {
 			Err(_) => {
 				Pallet::<C>::deposit_event(Event::InvalidFormat(id));
-				Ok(0)
+				Ok(Weight::zero())
 			},
 			Ok((Err(()), weight_used)) => {
 				Pallet::<C>::deposit_event(Event::UnsupportedVersion(id));
@@ -131,7 +136,7 @@ impl<XcmExecutor: xcm::latest::ExecuteXcm<C::Call>, C: Config> UmpSink for XcmSi
 			},
 			Ok((Ok(xcm_message), weight_used)) => {
 				let xcm_junction = Junction::Parachain(origin.into());
-				let outcome = XcmExecutor::execute_xcm(xcm_junction, xcm_message, max_weight);
+				let outcome = XcmExecutor::execute_xcm(xcm_junction, xcm_message, id, max_weight);
 				match outcome {
 					Outcome::Error(XcmError::WeightLimitReached(required)) => Err((id, required)),
 					outcome => {
@@ -211,12 +216,13 @@ pub mod pallet {
 	#[pallet::pallet]
 	#[pallet::generate_store(pub(super) trait Store)]
 	#[pallet::without_storage_info]
+	#[pallet::storage_version(migration::STORAGE_VERSION)]
 	pub struct Pallet<T>(_);
 
 	#[pallet::config]
 	pub trait Config: frame_system::Config + configuration::Config {
 		/// The aggregate event.
-		type Event: From<Event> + IsType<<Self as frame_system::Config>::Event>;
+		type RuntimeEvent: From<Event> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		/// A place where all received upward messages are funneled.
 		type UmpSink: UmpSink;
@@ -227,10 +233,10 @@ pub mod pallet {
 		/// stalls the queue in doing so. More than 100 will provide additional weight for the first message only.
 		///
 		/// Generally you'll want this to be a bit more - 150 or 200 would be good values.
-		type FirstMessageFactorPercent: Get<Weight>;
+		type FirstMessageFactorPercent: Get<u64>;
 
 		/// Origin which is allowed to execute overweight messages.
-		type ExecuteOverweightOrigin: EnsureOrigin<Self::Origin>;
+		type ExecuteOverweightOrigin: EnsureOrigin<Self::RuntimeOrigin>;
 
 		/// Weight information for extrinsics in this pallet.
 		type WeightInfo: WeightInfo;
@@ -324,7 +330,7 @@ pub mod pallet {
 	/// These messages stay there until manually dispatched.
 	#[pallet::storage]
 	pub type Overweight<T: Config> =
-		StorageMap<_, Twox64Concat, OverweightIndex, (ParaId, Vec<u8>), OptionQuery>;
+		CountedStorageMap<_, Twox64Concat, OverweightIndex, (ParaId, Vec<u8>), OptionQuery>;
 
 	/// The number of overweight messages ever recorded in `Overweight` (and thus the lowest free
 	/// index).
@@ -345,6 +351,7 @@ pub mod pallet {
 		///
 		/// Events:
 		/// - `OverweightServiced`: On success.
+		#[pallet::call_index(0)]
 		#[pallet::weight(weight_limit.saturating_add(<T as Config>::WeightInfo::service_overweight()))]
 		pub fn service_overweight(
 			origin: OriginFor<T>,
@@ -368,7 +375,7 @@ pub mod pallet {
 impl<T: Config> Pallet<T> {
 	/// Block initialization logic, called by initializer.
 	pub(crate) fn initializer_initialize(_now: T::BlockNumber) -> Weight {
-		0
+		Weight::zero()
 	}
 
 	/// Block finalization logic, called by initializer.
@@ -385,7 +392,7 @@ impl<T: Config> Pallet<T> {
 	/// Iterate over all paras that were noted for offboarding and remove all the data
 	/// associated with them.
 	fn perform_outgoing_para_cleanup(outgoing: &[ParaId]) -> Weight {
-		let mut weight: Weight = 0;
+		let mut weight: Weight = Weight::zero();
 		for outgoing_para in outgoing {
 			weight = weight.saturating_add(Self::clean_ump_after_outgoing(outgoing_para));
 		}
@@ -467,7 +474,7 @@ impl<T: Config> Pallet<T> {
 		para: ParaId,
 		upward_messages: Vec<UpwardMessage>,
 	) -> Weight {
-		let mut weight = 0;
+		let mut weight = Weight::zero();
 
 		if !upward_messages.is_empty() {
 			let (extra_count, extra_size) = upward_messages
@@ -503,24 +510,34 @@ impl<T: Config> Pallet<T> {
 
 	/// Devote some time into dispatching pending upward messages.
 	pub(crate) fn process_pending_upward_messages() -> Weight {
-		let mut weight_used = 0;
+		const MAX_MESSAGES_PER_BLOCK: u8 = 10;
+		let mut messages_processed = 0;
+		let mut weight_used = Weight::zero();
 
 		let config = <configuration::Pallet<T>>::config();
 		let mut cursor = NeedsDispatchCursor::new::<T>();
 		let mut queue_cache = QueueCache::new();
 
 		while let Some(dispatchee) = cursor.peek() {
-			if weight_used >= config.ump_service_total_weight {
+			if weight_used.any_gte(config.ump_service_total_weight) ||
+				messages_processed >= MAX_MESSAGES_PER_BLOCK
+			{
+				// Temporarily allow for processing of a max of 10 messages per block, until we
+				// properly account for proof size weights.
+				//
 				// Then check whether we've reached or overshoot the
 				// preferred weight for the dispatching stage.
 				//
 				// if so - bail.
 				break
 			}
-			let max_weight = if weight_used == 0 {
+			let max_weight = if weight_used == Weight::zero() {
 				// we increase the amount of weight that we're allowed to use on the first message to try to prevent
 				// the possibility of blockage of the queue.
-				config.ump_service_total_weight * T::FirstMessageFactorPercent::get() / 100
+				config
+					.ump_service_total_weight
+					.saturating_mul(T::FirstMessageFactorPercent::get()) /
+					100
 			} else {
 				config.ump_service_total_weight - weight_used
 			};
@@ -529,13 +546,16 @@ impl<T: Config> Pallet<T> {
 			// our remaining weight limit, then consume it.
 			let maybe_next = queue_cache.peek_front::<T>(dispatchee);
 			if let Some(upward_message) = maybe_next {
+				messages_processed += 1;
 				match T::UmpSink::process_upward_message(dispatchee, upward_message, max_weight) {
 					Ok(used) => {
 						weight_used += used;
 						let _ = queue_cache.consume_front::<T>(dispatchee);
 					},
 					Err((id, required)) => {
-						if required > config.ump_max_individual_weight {
+						let is_under_limit = Overweight::<T>::count() < MAX_OVERWEIGHT_MESSAGES;
+						weight_used.saturating_accrue(T::DbWeight::get().reads(1));
+						if required.any_gt(config.ump_max_individual_weight) && is_under_limit {
 							// overweight - add to overweight queue and continue with message
 							// execution consuming the message.
 							let upward_message = queue_cache.consume_front::<T>(dispatchee).expect(
