@@ -9,7 +9,7 @@ edition.workspace = true
 # Substrate Client
 sc-authority-discovery = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 babe = { package = "sc-consensus-babe", git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
-beefy-primitives = { git = "https://github.com/paritytech/substrate", package = "sp-beefy" , branch = "polkadot-v0.9.38" }
+beefy-primitives = { git = "https://github.com/paritytech/substrate", package = "sp-beefy", branch = "polkadot-v0.9.38" }
 beefy-gadget = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 grandpa = { package = "sc-finality-grandpa", git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 mmr-gadget = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
@@ -29,7 +29,7 @@ sc-keystore = { git = "https://github.com/paritytech/substrate", branch = "polka
 sc-basic-authorship = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 sc-offchain = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 sc-sysinfo = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
-service = { package = "sc-service", git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.38" }
+service = { package = "sc-service", git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-v0.9.38" }
 telemetry = { package = "sc-telemetry", git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 
 # Substrate Primitives

@@ -48,7 +48,7 @@ sc-network = { git = "https://github.com/paritytech/substrate", branch = "polkad
 sc-network-common = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 sc-tracing = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 sc-transaction-pool = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
-sc-service = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.38" }
+sc-service = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-v0.9.38" }
 sp-arithmetic = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 sp-blockchain = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 sp-core = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
@@ -58,7 +58,7 @@ sp-state-machine = { git = "https://github.com/paritytech/substrate", branch = "
 substrate-test-client = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 
 [dev-dependencies]
-pallet-balances = { git = "https://github.com/paritytech/substrate", default-features = false , branch = "polkadot-v0.9.38" }
+pallet-balances = { git = "https://github.com/paritytech/substrate", default-features = false, branch = "polkadot-v0.9.38" }
 serde_json = "1.0.81"
 substrate-test-utils = { git = "https://github.com/paritytech/substrate", branch = "polkadot-v0.9.38" }
 tokio = { version = "1.24.1", features = ["macros"] }
