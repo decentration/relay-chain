@@ -3,7 +3,6 @@
   "id": "rococo_staging_testnet",
   "chainType": "Live",
   "bootNodes": [
-    "/dns/popart-bn1.jelliedowl.com/tcp/30333/p2p/12D3KooWLK1Gf56E3F8JmCVyvpSgc7QXp1aN8D9apECnqRtBaNw5"
   ],
   "telemetryEndpoints": null,
   "protocolId": "pop",
