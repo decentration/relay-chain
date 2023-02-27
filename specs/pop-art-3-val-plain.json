@@ -2,10 +2,7 @@
   "name": "Pop-Art Rococo Staging Testnet",
   "id": "rococo_staging_testnet",
   "chainType": "Live",
-  "bootNodes": [
-    "/dns/popart-bn1.jelliedowl.com/tcp/30333/p2p/12D3KooWLK1Gf56E3F8JmCVyvpSgc7QXp1aN8D9apECnqRtBaNw5",
-    "/dns/popart-bn2.jelliedowl.com/tcp/30333/p2p/12D3KooWF2AMHrR3H4pgFXX9Vc6jqVJrLPB765thZjJSnx3YPzHD"
-  ],
+  "bootNodes": [],
   "telemetryEndpoints": [
     [
       "/dns/telemetry.polkadot.io/tcp/443/x-parity-wss/submit",
@@ -93,11 +90,11 @@
               }
             ],
             [
-              "5CQ7S9CMzpqft1zEk6fr5uzxLhsc7zhNScvVa3YiGmmoSSVg",
-              "5CQ7S9CMzpqft1zEk6fr5uzxLhsc7zhNScvVa3YiGmmoSSVg",
+              "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
+              "5FLSigC9HGRKVhB9FiEo4Y3koPsNmBmLJbpXg2mp1hXcS59Y",
               {
-                "grandpa": "5EX7Uw8VbNgDtdEbTa3rGVkR7VsGcPoFpFfPYs4iexyKVw72",
-                "babe": "5Gekpirt85FG8J3eaZGyCbx8CT64oPrTPXCXmUqAU1tvrb1U",
+                "grandpa": "5GEq1XYmPJQamLZQb64PGXHWCujchPXzoU4Da8MYTvq69Tcd",
+                "babe": "5CrHvGh7pNAmdsGhCkhgLoaUTq7Lva4uJXb6SvFr7h2fBxyM",
                 "im_online": "5FLZ8nsw6v1tKQ4dAfbMX5z6cH33m4iVBmKiABR5uRx1x1Ay",
                 "para_validator": "5Gmub5hEKcrmS53QE2Ls6afE7YhsFQTepPUqhF9vFipkterU",
                 "para_assignment": "5Hg2T4obKFrXyrCvtdpVSMT7Fru7VSBTdtKEDXFXQaXUHXk9",
