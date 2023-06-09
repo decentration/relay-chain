@@ -2,7 +2,7 @@
 
 ![alt text](https://github.com/Kabocha-Network/polkadot/blob/master/images/pop-art.jpg?raw=true?raw=true)
 
-This branch contains Pop-Art, a custom Rococo relay staging network. It is intended for projects in the Substrate ecosytem (and Edgeware/Kabocha community), so that people can test their parachain integrations, and get experiecne as a validator in a shared network. 
+This branch contains Pop-Art, a custom Rococo relay staging network. It is intended for projects in the Substrate ecosytem, so that people can test their parachain integrations, and get experiecne as a validator in a shared network. 
 
 
 # Launch a Validator
@@ -30,7 +30,7 @@ Example of a command:
 ./target/release/polkadot \
 -- validator \
 -- base-path /tmp/relay/MyVal1 \ specify your db path
--- chain ./specs/pop-art-3-val.json \
+-- chain ./specs/pop-art-2023.json \
 -- port 30333 \
 -- ws-port 9944 \
 -- rpc-port 9933 \
@@ -46,7 +46,7 @@ _In this instance, our chain spec contains bootnodes, but if you come across a c
 ## Register new validators
 
 ### Get some POP tokens
-Ask in the [Kabocha Technical Chat](https://matrix.to/#/#kabocha.technical:matrix.org) for some POP so that you can add "existential deposit" to your (stash) AccountIds of their validators.
+Ask in the [Kabocha Technical Chat](https://matrix.to/#/#decentration:matrix.org) for some POP so that you can add "existential deposit" to your (stash) AccountIds of their validators.
 
 ### Ask Sudo to register your AccountIds as Validators
 Ask the sudo to register your validators as via the `sudo > validatorManager > registerValidators`
