@@ -2,12 +2,10 @@
 
 ![alt text](https://github.com/Kabocha-Network/polkadot/blob/master/images/pop-art.jpg?raw=true?raw=true)
 
-This branch contains Pop-Art, a custom Rococo relay staging network. It is intended for projects in the Edgeware community, and wider Substrate ecosytem, so that they can test their parachain integrations. 
+This branch contains Pop-Art, a custom Rococo relay staging network. It is intended for projects who want to:
 
-
-# Docker Quick Start
-
-You can run multiple validators if you 
+- Test parachains on a community run testnet. If you want to test you need to contrinute some validators.
+- For new validators who want to gaining practical experience running validators. 
 
 
 # Polkadot
