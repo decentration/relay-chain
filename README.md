@@ -46,7 +46,7 @@ _In this instance, our chain spec contains bootnodes, but if you come across a c
 ## Register new validators
 
 ### Get some POP tokens
-Ask in the [Kabocha Technical Chat](https://matrix.to/#/#decentration:matrix.org) for some POP so that you can add "existential deposit" to your (stash) AccountIds of their validators.
+Ask [Ramsey Decentration in Element](https://matrix.to/#/#decentration:matrix.org) for some POP so that you can add "existential deposit" to your (stash) AccountIds of their validators.
 
 ### Ask Sudo to register your AccountIds as Validators
 Ask the sudo to register your validators as via the `sudo > validatorManager > registerValidators`
